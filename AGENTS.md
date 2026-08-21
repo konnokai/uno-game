@@ -15,7 +15,7 @@
 
 - 前端：React、TypeScript、Vite。
 - 後端：Node.js、Express、Socket.IO。
-- 測試：Vitest、Playwright。
+- 測試：Vitest；主要瀏覽器流程使用 OpenChamber web browser tools 驗證。
 - 套件管理與 Monorepo：pnpm workspace。
 - 共用的卡牌、遊戲狀態及 Socket 事件型別放在 shared package。
 - 第一版以伺服器記憶體保存房間，不使用資料庫；伺服器重啟後可清除所有房間。
@@ -200,7 +200,7 @@ player:reconnected
 5. 完成響應式牌桌、萬用牌選色、UNO 及抽四質疑介面。
 6. 擴充及驗證 3–8 人遊戲。
 7. 加入重新連線、斷線暫停、逾時及房間清理。
-8. 加入 Socket 整合測試及 Playwright 端對端測試。
+8. 加入 Socket 整合測試，並使用 OpenChamber web browser tools 驗證主要瀏覽器流程。
 
 ## 測試要求
 
@@ -213,7 +213,7 @@ player:reconnected
 - 測試萬用抽四的合法使用、成功質疑與失敗質疑。
 - 測試牌庫重洗及勝利判定。
 - 以多個 Socket 客戶端測試建房、加入、開始、出牌及斷線重連。
-- 以 Playwright 測試至少一條從建房到遊戲結束的完整流程。
+- 使用 OpenChamber web browser tools 驗證至少一條從建房到遊戲結束的完整流程。
 - 驗證桌面與手機尺寸都能完成操作。
 
 ## 首版驗收標準
