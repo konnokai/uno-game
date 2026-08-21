@@ -38,6 +38,21 @@ describe("bot player", () => {
     expect(decideBotAction(game, "bot")).toEqual({ type: "draw" });
   });
 
+  it("can randomly play a draw four while holding the current color", () => {
+    const game = gameWithBot([
+      card("red-2", "red", 2),
+      card("draw-four", null, "wild-draw-four"),
+      card("blue-3", "blue", 3),
+    ]);
+
+    expect(decideBotAction(game, "bot", () => 0.99)).toEqual({
+      type: "play",
+      cardId: "draw-four",
+      chosenColor: "red",
+      declareUno: false,
+    });
+  });
+
   it("immediately plays a playable drawn wild and chooses its strongest color", () => {
     const hand = [
       card("drawn-wild", null, "wild"),

@@ -1,4 +1,4 @@
-import { useEffect, useState, type DragEvent } from "react";
+import { useEffect, useState, type DragEvent, type MouseEvent } from "react";
 import {
   isCardPlayable,
   type Card,
@@ -98,7 +98,7 @@ function UnoCard({
   card: Card;
   disabled?: boolean;
   selected?: boolean;
-  onClick?: () => void;
+  onClick?: (event: MouseEvent<HTMLButtonElement>) => void;
   compact?: boolean;
   draggable?: boolean;
   dragging?: boolean;
@@ -428,11 +428,10 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
   function playCardShortcut(card: Card) {
     if (busy || !isPlayableNow(card)) return;
     setSelectedCardId(card.id);
-    setDeclareUno(false);
     if (card.color === null) {
       setChoosingColor(true);
     } else {
-      submitCard(card);
+      submitCard(card, undefined, declareUno && selectedCardId === card.id);
     }
   }
 
@@ -644,9 +643,11 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
                   draggable={!busy}
                   dragging={draggingCardId === card.id}
                   key={card.id}
-                  onClick={() => {
-                    setSelectedCardId(card.id === selectedCardId ? null : card.id);
-                    setDeclareUno(false);
+                  onClick={(event) => {
+                    const isSameCard = card.id === selectedCardId;
+                    setSelectedCardId(isSameCard ? null : card.id);
+                    // Keep UNO armed through the two clicks that precede onDoubleClick.
+                    if (event.detail === 1 && !isSameCard) setDeclareUno(false);
                   }}
                   onDragEnd={() => {
                     setDraggingCardId(null);

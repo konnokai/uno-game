@@ -1,7 +1,6 @@
 import {
   CARD_COLORS,
   isCardPlayable,
-  isWildDrawFourLegal,
   type Card,
   type CardColor,
   type GamePhase,
@@ -47,7 +46,12 @@ function playDecision(card: Card, hand: readonly Card[]): BotDecision {
   };
 }
 
-export function decideBotAction(game: BotGameView, botId: string): BotDecision {
+/** Selects a bot action while leaving draw-four legality for the challenge flow. */
+export function decideBotAction(
+  game: BotGameView,
+  botId: string,
+  random: () => number = Math.random,
+): BotDecision {
   if (game.phase === "finished") return { type: "none" };
 
   if (game.phase === "awaiting-draw-four-challenge") {
@@ -66,14 +70,20 @@ export function decideBotAction(game: BotGameView, botId: string): BotDecision {
     return drawn ? playDecision(drawn, game.hand) : { type: "pass" };
   }
 
+  // A bot may intentionally choose an illegal draw four so the target can challenge it.
   const playable = game.hand.filter((card) =>
-    isCardPlayable(card, game.topDiscard, game.currentColor!) &&
-    (card.value !== "wild-draw-four" ||
-      isWildDrawFourLegal(game.hand, game.currentColor!, card.id)),
+    isCardPlayable(card, game.topDiscard, game.currentColor!),
   );
-  const selected =
+  const preferred =
     playable.find((card) => card.color !== null) ??
     playable.find((card) => card.value === "wild") ??
     playable[0];
-  return selected ? playDecision(selected, game.hand) : { type: "draw" };
+  if (!preferred) return { type: "draw" };
+
+  const drawFours = playable.filter((card) => card.value === "wild-draw-four");
+  const candidates = drawFours.length > 0
+    ? [preferred, ...drawFours.filter((card) => card.id !== preferred.id)]
+    : [preferred];
+  const selected = candidates[Math.floor(random() * candidates.length)] ?? preferred;
+  return playDecision(selected, game.hand);
 }
