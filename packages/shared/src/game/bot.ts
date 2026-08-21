@@ -1,10 +1,10 @@
 import {
   CARD_COLORS,
-  isCardPlayable,
   type Card,
   type CardColor,
   type GamePhase,
-} from "@uno/shared";
+} from "./types.js";
+import { isCardPlayable } from "./engine.js";
 
 export interface BotGameView {
   hand: readonly Card[];
@@ -46,7 +46,7 @@ function playDecision(card: Card, hand: readonly Card[]): BotDecision {
   };
 }
 
-/** Selects a bot action while leaving draw-four legality for the challenge flow. */
+/** Selects one server-validated action without knowing any other player's hand. */
 export function decideBotAction(
   game: BotGameView,
   botId: string,
@@ -70,7 +70,8 @@ export function decideBotAction(
     return drawn ? playDecision(drawn, game.hand) : { type: "pass" };
   }
 
-  // A bot may intentionally choose an illegal draw four so the target can challenge it.
+  // Keep the challenge rule meaningful: a bot may select a playable +4 even
+  // when it still holds a card matching the current color.
   const playable = game.hand.filter((card) =>
     isCardPlayable(card, game.topDiscard, game.currentColor!),
   );

@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ConnectionReadyPayload } from "@uno/shared";
-import { socket } from "./socket";
+import { serverUrl, socket } from "./socket";
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
 
@@ -8,7 +7,7 @@ export function ConnectionStatus() {
   const [state, setState] = useState<ConnectionState>(
     socket.connected ? "connected" : "connecting",
   );
-  const [serverMessage, setServerMessage] = useState("");
+  const [serverMessage] = useState("Cloudflare Worker");
 
   useEffect(() => {
     function handleConnect() {
@@ -19,19 +18,15 @@ export function ConnectionStatus() {
       setState("disconnected");
     }
 
-    function handleReady(payload: ConnectionReadyPayload) {
-      setServerMessage(payload.message);
-    }
-
     socket.on("connect", handleConnect);
     socket.on("disconnect", handleDisconnect);
-    socket.on("connection:ready", handleReady);
-    socket.connect();
+    void fetch(`${serverUrl}/health`)
+      .then((response) => setState(response.ok ? "connected" : "disconnected"))
+      .catch(() => setState("disconnected"));
 
     return () => {
       socket.off("connect", handleConnect);
       socket.off("disconnect", handleDisconnect);
-      socket.off("connection:ready", handleReady);
     };
   }, []);
 

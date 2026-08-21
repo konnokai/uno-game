@@ -14,20 +14,20 @@
 ## 技術架構
 
 - 前端：React、TypeScript、Vite。
-- 後端：Node.js、Express、Socket.IO。
+- 後端：Cloudflare Worker、SQLite-backed Durable Objects、原生 WebSocket。
 - 測試：Vitest；主要瀏覽器流程使用 OpenChamber web browser tools 驗證。
 - 套件管理與 Monorepo：pnpm workspace。
-- 共用的卡牌、遊戲狀態及 Socket 事件型別放在 shared package。
-- 第一版以伺服器記憶體保存房間，不使用資料庫；伺服器重啟後可清除所有房間。
+- 共用的卡牌、遊戲狀態、純房間服務及 WebSocket protocol 型別放在 shared package。
+- 每個房間使用一個 SQLite-backed Durable Object；公開大廳清單使用 LobbyDirectory Durable Object。
 
 建議目錄：
 
 ```text
 apps/
   web/       # React 前端
-  server/    # 遊戲及即時連線伺服器
+  worker/    # Worker HTTP API、Room Durable Object 及 LobbyDirectory
 packages/
-  shared/    # 前後端共用型別與純遊戲規則
+  shared/    # 前後端共用型別、房間服務與純遊戲規則
 ```
 
 ## 核心原則
@@ -36,7 +36,7 @@ packages/
 - 前端只送出玩家意圖，不得自行決定出牌是否合法或修改遊戲結果。
 - 伺服器必須驗證回合、手牌所有權、出牌合法性、特殊牌條件及遊戲階段。
 - 玩家只能收到自己的完整手牌；其他玩家只公開手牌數量。
-- 遊戲規則應實作為不依賴 React、Express 或 Socket.IO 的純 TypeScript 邏輯，以便單元測試。
+- 遊戲規則與房間操作應實作為不依賴 React、Express 或 Socket.IO 的純 TypeScript 邏輯，以便單元測試。
 - 前後端共用事件與資料型別，避免重複宣告或使用未驗證的任意物件。
 - 優先完成小而可靠的 MVP，不提前加入帳號、資料庫或非必要功能。
 
@@ -138,13 +138,21 @@ type GamePhase =
 
 每次狀態更新應包含版本號，前端不得用舊封包覆蓋較新的狀態。
 
-## Socket 事件
+## HTTP 與 WebSocket protocol
 
-玩家送往伺服器的主要事件：
+HTTP API：
 
 ```text
-room:create
-room:join
+GET  /health
+GET  /api/rooms
+POST /api/rooms
+POST /api/rooms/:roomCode/join
+GET  /ws/room/:roomCode
+```
+
+WebSocket 第一個訊息必須是 `session:attach`。之後玩家送往伺服器的主要訊息：
+
+```text
 room:ready
 game:start
 game:play-card
@@ -156,23 +164,20 @@ game:rematch
 game:bot-control
 ```
 
-伺服器送往玩家的主要事件：
+伺服器送往玩家的主要訊息：
 
 ```text
 room:updated
 game:started
 game:state
 game:action-rejected
-game:ended
-player:disconnected
-player:reconnected
 ```
 
-事件命名或 payload 可在實作時小幅調整，但必須保持前後端型別一致並由伺服器驗證。
+所有訊息使用 `packages/shared/src/room.ts` 的 serializable discriminated union，並由 Worker 執行期驗證。
 
 ## 重新連線與離線處理
 
-- 瀏覽器以本機儲存的隨機連線權杖識別玩家，不可以只依賴 Socket ID。
+- 瀏覽器以 localStorage 保存隨機連線權杖；Durable Object 只保存 token hash，不可以只依賴 WebSocket ID。
 - 玩家重新整理頁面後應能恢復原本座位與手牌。
 - 遊戲中的玩家斷線時立即啟用機器人代管，不暫停其他玩家；座位與手牌保留到玩家重新連線或牌局結束。
 - 玩家重新連線後必須自動關閉代管並取回原本座位與手牌；玩家也可在連線正常時手動開啟或關閉自己的代管。
@@ -186,21 +191,21 @@ player:reconnected
 
 - 房號及玩家權杖使用安全的隨機來源產生。
 - 暱稱需要限制長度、去除前後空白並安全顯示。
-- 建立及加入房間需要基本頻率限制。
-- 所有 Socket payload 都要進行執行期驗證。
+- 建立及加入房間需要 Worker 邊緣與 Durable Object 的基本頻率限制。
+- 所有 HTTP 與 WebSocket payload 都要進行執行期驗證。
 - 不接受客戶端傳入完整遊戲狀態、抽牌結果或任意玩家 ID 來覆蓋伺服器資料。
 - 錯誤回應應清楚但不可洩漏其他玩家手牌或伺服器內部資料。
 
 ## 開發順序
 
-1. 建立 pnpm workspace、前端、後端及 shared package。
+1. 建立 pnpm workspace、前端、Worker 及 shared package。
 2. 建立不依賴網路層的 UNO 規則引擎與單元測試。
 3. 實作房間建立、加入、準備及開始遊戲。
-4. 將規則引擎接入 Socket.IO，完成 2 人即時遊戲。
+4. 將規則引擎接入 Room Durable Object，完成 2 人原生 WebSocket 即時遊戲。
 5. 完成響應式牌桌、萬用牌選色、UNO 及抽四質疑介面。
 6. 擴充及驗證 3–8 人遊戲。
-7. 加入重新連線、斷線暫停、逾時及房間清理。
-8. 加入 Socket 整合測試，並使用 OpenChamber web browser tools 驗證主要瀏覽器流程。
+7. 加入重新連線、斷線代管、Durable Object Alarm 及房間清理。
+8. 加入 Worker/DO 測試，並使用 OpenChamber web browser tools 驗證主要瀏覽器流程。
 
 ## 測試要求
 
@@ -212,7 +217,7 @@ player:reconnected
 - 測試 UNO 宣告、抓取時機及罰牌。
 - 測試萬用抽四的合法使用、成功質疑與失敗質疑。
 - 測試牌庫重洗及勝利判定。
-- 以多個 Socket 客戶端測試建房、加入、開始、出牌及斷線重連。
+- 以多個 WebSocket 客戶端測試建房、加入、開始、出牌及斷線重連。
 - 使用 OpenChamber web browser tools 驗證至少一條從建房到遊戲結束的完整流程。
 - 驗證桌面與手機尺寸都能完成操作。
 
@@ -225,4 +230,4 @@ player:reconnected
 5. 玩家重新整理後可恢復原本座位與私人手牌。
 6. 玩家出完最後一張牌後正確顯示勝者。
 7. 手機與桌面瀏覽器都能完成整場遊戲。
-8. 單元測試、Socket 整合測試及主要端對端流程全部通過。
+8. 單元測試、Worker/DO 測試及主要端對端流程全部通過。

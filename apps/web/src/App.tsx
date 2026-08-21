@@ -6,6 +6,7 @@ import type {
   RoomSession,
   RoomSessionResponse,
   RoomSnapshot,
+  SessionAttachResponse,
 } from "@uno/shared";
 import {
   MAX_NICKNAME_LENGTH,
@@ -26,7 +27,7 @@ import {
 import { ConnectionStatus } from "./ConnectionStatus";
 import { GamePage } from "./GameTable";
 import { RulesGuide } from "./RulesGuide";
-import { socket } from "./socket";
+import { createRoom as createRoomRequest, joinRoom as joinRoomRequest, listRooms, socket } from "./socket";
 
 const SESSION_KEY = "uno-room-session";
 
@@ -74,7 +75,7 @@ function HomePage({ rooms, session, onSession, onError, error }: HomePageProps) 
     navigate(`/lobby/${response.room.code}`);
   }
 
-  function createRoom(event: FormEvent) {
+  async function createRoom(event: FormEvent) {
     event.preventDefault();
     onError("");
     const normalized = normalizeNickname(nickname);
@@ -84,10 +85,10 @@ function HomePage({ rooms, session, onSession, onError, error }: HomePageProps) 
     }
     setSubmitting("create");
     setNickname(normalized);
-    socket.emit("room:create", { nickname: normalized, requestId: requestId() }, handleResponse);
+    handleResponse(await createRoomRequest(normalized, requestId()));
   }
 
-  function submitJoin(code: string) {
+  async function submitJoin(code: string) {
     onError("");
     const normalized = normalizeNickname(nickname);
     if (!normalized) {
@@ -97,11 +98,7 @@ function HomePage({ rooms, session, onSession, onError, error }: HomePageProps) 
     setSubmitting("join");
     setNickname(normalized);
     setRoomCode(code);
-    socket.emit("room:join", {
-      nickname: normalized,
-      roomCode: code,
-      requestId: requestId(),
-    }, handleResponse);
+    handleResponse(await joinRoomRequest(code, normalized, requestId()));
   }
 
   function joinRoom(event: FormEvent) {
@@ -396,7 +393,6 @@ export function App() {
   const [error, setError] = useState("");
   const [connected, setConnected] = useState(socket.connected);
   const [needsRestore, setNeedsRestore] = useState(false);
-  const [restoreAttempt, setRestoreAttempt] = useState(0);
   const restoring = useRef<string | null>(null);
 
   function updateRoom(nextRoom: RoomSnapshot) {
@@ -411,6 +407,7 @@ export function App() {
     localStorage.setItem(SESSION_KEY, JSON.stringify(response.session));
     setSession(response.session);
     updateRoom(response.room);
+    setGame(null);
     setError("");
   }
 
@@ -436,23 +433,41 @@ export function App() {
       setGame(null);
       updateRoom(nextRoom);
     }
+    function handleSessionAttached(response: Extract<SessionAttachResponse, { ok: true }>) {
+      updateRoom(response.room);
+      setGame(response.game);
+      setNeedsRestore(false);
+    }
+    function handleSessionAttachFailed(response: Extract<SessionAttachResponse, { ok: false }>) {
+      restoring.current = null;
+      setError(response.error.message);
+      if (response.error.code === "ROOM_NOT_FOUND" || response.error.code === "NOT_IN_ROOM") {
+        socket.disconnect();
+        localStorage.removeItem(SESSION_KEY);
+        setSession(null);
+        setRoom(null);
+        setGame(null);
+        setNeedsRestore(false);
+      }
+    }
 
     socket.on("room:updated", handleRoomUpdated);
-    socket.on("room:list-updated", setAvailableRooms);
     socket.on("game:started", handleGameStarted);
     socket.on("game:action-rejected", handleRejected);
     socket.on("game:state", handleGameState);
+    socket.on("session:attached", handleSessionAttached);
+    socket.on("session:attach-failed", handleSessionAttachFailed);
     socket.on("disconnect", handleDisconnect);
     socket.on("connect", handleConnect);
-    socket.connect();
-    socket.emit("room:list", setAvailableRooms);
+    void listRooms().then(setAvailableRooms);
 
     return () => {
       socket.off("room:updated", handleRoomUpdated);
-      socket.off("room:list-updated", setAvailableRooms);
       socket.off("game:started", handleGameStarted);
       socket.off("game:action-rejected", handleRejected);
       socket.off("game:state", handleGameState);
+      socket.off("session:attached", handleSessionAttached);
+      socket.off("session:attach-failed", handleSessionAttachFailed);
       socket.off("disconnect", handleDisconnect);
       socket.off("connect", handleConnect);
     };
@@ -460,59 +475,36 @@ export function App() {
 
   useEffect(() => {
     const match = location.pathname.match(/^\/(?:lobby|game)\/([^/]+)$/);
-    const routeCode = match?.[1];
+    const routeCode = match?.[1]?.toUpperCase();
     if (
-      !connected ||
       !routeCode ||
       !session ||
       session.roomCode !== routeCode ||
-      (room?.code === routeCode && !needsRestore)
+      (restoring.current === `${routeCode}:${session.playerToken}` && !needsRestore)
     ) {
       return;
     }
     const restoreKey = `${routeCode}:${session.playerToken}`;
     if (restoring.current === restoreKey) return;
     restoring.current = restoreKey;
-    socket.emit(
-      "room:join",
-      {
-        roomCode: routeCode,
-        nickname: session.nickname,
-        playerToken: session.playerToken,
-        requestId: requestId(),
-      },
-      (response) => {
-        restoring.current = null;
-        if (response.ok) {
-          saveSession(response);
-          setNeedsRestore(false);
-        } else {
-          setError(response.error.message);
-          if (response.error.code === "RATE_LIMITED") {
-            window.setTimeout(() => setRestoreAttempt((attempt) => attempt + 1), 1_500);
-          } else if (
-            response.error.code === "ROOM_NOT_FOUND" ||
-            response.error.code === "GAME_ALREADY_STARTED" ||
-            response.error.code === "NICKNAME_TAKEN"
-          ) {
-            localStorage.removeItem(SESSION_KEY);
-            setSession(null);
-            setNeedsRestore(false);
-          }
-        }
-      },
-    );
-  }, [connected, location.pathname, needsRestore, restoreAttempt, room, session]);
+    socket.attach(session);
+  }, [location.pathname, needsRestore, session]);
 
   function leaveRoom() {
-    socket.emit("room:leave", { requestId: requestId() }, () => {
+    const clearLocalSession = () => {
+      socket.disconnect();
       localStorage.removeItem(SESSION_KEY);
       setSession(null);
       setRoom(null);
       setGame(null);
       setError("");
       navigate("/");
-    });
+    };
+    if (!socket.connected) {
+      clearLocalSession();
+      return;
+    }
+    socket.emit("room:leave", { requestId: requestId() }, clearLocalSession);
   }
 
   return (

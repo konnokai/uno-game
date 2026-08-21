@@ -7,14 +7,12 @@
     "pnpm": ">=10.15.0 <11"
   },
   "scripts": {
-    "dev": "pnpm --parallel --filter @uno/server --filter @uno/web dev",
-    "build": "pnpm --filter @uno/shared build && pnpm --filter @uno/server build && pnpm --filter @uno/web build",
-    "host:local": "pnpm build && pnpm start",
-    "start": "cross-env NODE_ENV=production node apps/server/dist/index.js",
-    "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck"
-  },
-  "devDependencies": {
-    "cross-env": "^10.1.0"
+    "dev": "pnpm --parallel --filter @uno/worker --filter @uno/web dev",
+    "dev:web": "pnpm --filter @uno/web dev",
+    "dev:worker": "pnpm --filter @uno/worker dev",
+    "build": "pnpm --filter @uno/shared build && pnpm --filter @uno/web build && pnpm --filter @uno/worker build",
+    "test": "pnpm --filter @uno/shared test && pnpm --filter @uno/worker test",
+    "typecheck": "pnpm --filter @uno/shared typecheck && pnpm --filter @uno/web typecheck && pnpm --filter @uno/worker typecheck",
+    "deploy:worker": "pnpm --filter @uno/worker deploy"
   }
 }

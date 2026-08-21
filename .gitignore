@@ -5,6 +5,11 @@ dist/
 *.log
 *.tsbuildinfo
 
+# Cloudflare Workers
+.wrangler/
+.dev.vars
+worker-configuration.d.ts
+
 # graphify
 /graphify-out/cost.json
 /graphify-out/cache

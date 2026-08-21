@@ -63,6 +63,7 @@ export interface RoomSession {
 export interface CreateRoomPayload {
   nickname: string;
   requestId: string;
+  playerToken?: string;
 }
 
 export interface JoinRoomPayload {
@@ -109,7 +110,8 @@ export type RoomErrorCode =
   | "BOT_CONTROL_ACTIVE"
   | "GAME_NOT_FINISHED"
   | "GAME_PAUSED"
-  | "RATE_LIMITED";
+  | "RATE_LIMITED"
+  | "NETWORK_ERROR";
 
 export interface RoomError {
   code: RoomErrorCode;
@@ -212,83 +214,51 @@ export interface GameActionRejectedPayload {
   error: RuleError | RoomError;
 }
 
-export interface ClientToServerEvents {
-  "connection:ping": (acknowledge: (serverTime: string) => void) => void;
-  "room:list": (acknowledge: (rooms: RoomListItem[]) => void) => void;
-  "room:create": (
-    payload: CreateRoomPayload,
-    acknowledge: (response: RoomSessionResponse) => void,
-  ) => void;
-  "room:join": (
-    payload: JoinRoomPayload,
-    acknowledge: (response: RoomSessionResponse) => void,
-  ) => void;
-  "room:ready": (
-    payload: SetReadyPayload,
-    acknowledge: (response: RoomActionResponse) => void,
-  ) => void;
-  "room:add-bot": (
-    payload: ActionRequestPayload,
-    acknowledge: (response: RoomActionResponse) => void,
-  ) => void;
-  "room:remove-bot": (
-    payload: RemoveBotPayload,
-    acknowledge: (response: RoomActionResponse) => void,
-  ) => void;
-  "room:leave": (
-    payload: ActionRequestPayload,
-    acknowledge: (response: RoomActionResponse) => void,
-  ) => void;
-  "game:start": (
-    payload: ActionRequestPayload,
-    acknowledge: (response: RoomActionResponse) => void,
-  ) => void;
-  "game:rematch": (
-    payload: ActionRequestPayload,
-    acknowledge: (response: RoomActionResponse) => void,
-  ) => void;
-  "game:bot-control": (
-    payload: SetBotControlPayload,
-    acknowledge: (response: RoomActionResponse) => void,
-  ) => void;
-  "game:play-card": (
-    payload: PlayCardPayload,
-    acknowledge: (response: GameActionResponse) => void,
-  ) => void;
-  "game:draw-card": (
-    payload: ActionRequestPayload,
-    acknowledge: (response: GameActionResponse) => void,
-  ) => void;
-  "game:pass": (
-    payload: ActionRequestPayload,
-    acknowledge: (response: GameActionResponse) => void,
-  ) => void;
-  "game:choose-color": (
-    payload: ChooseColorPayload,
-    acknowledge: (response: GameActionResponse) => void,
-  ) => void;
-  "game:call-uno": (
-    payload: ActionRequestPayload,
-    acknowledge: (response: GameActionResponse) => void,
-  ) => void;
-  "game:catch-uno": (
-    payload: ActionRequestPayload,
-    acknowledge: (response: GameActionResponse) => void,
-  ) => void;
-  "game:challenge-draw-four": (
-    payload: ResolveDrawFourPayload,
-    acknowledge: (response: GameActionResponse) => void,
-  ) => void;
+export interface SessionAttachPayload {
+  roomCode: string;
+  playerId: string;
+  playerToken: string;
 }
 
-export interface ServerToClientEvents {
-  "connection:ready": (payload: ConnectionReadyPayload) => void;
-  "room:list-updated": (rooms: RoomListItem[]) => void;
-  "room:updated": (room: RoomSnapshot) => void;
-  "game:started": (payload: GameStartedPayload) => void;
-  "game:state": (state: GameSnapshot) => void;
-  "game:action-rejected": (payload: GameActionRejectedPayload) => void;
+export interface SessionAttachedPayload {
+  room: RoomSnapshot;
+  game: GameSnapshot | null;
 }
+
+export type SessionAttachResponse =
+  | { ok: true; room: RoomSnapshot; game: GameSnapshot | null }
+  | { ok: false; error: RoomError };
+
+/** Messages sent after the HTTP room create/join flow has established a session. */
+export type ClientMessage =
+  | { type: "session:attach"; requestId: string; payload: SessionAttachPayload }
+  | { type: "room:ready"; requestId: string; payload: SetReadyPayload }
+  | { type: "room:add-bot"; requestId: string; payload: ActionRequestPayload }
+  | { type: "room:remove-bot"; requestId: string; payload: RemoveBotPayload }
+  | { type: "room:leave"; requestId: string; payload: ActionRequestPayload }
+  | { type: "game:start"; requestId: string; payload: ActionRequestPayload }
+  | { type: "game:rematch"; requestId: string; payload: ActionRequestPayload }
+  | { type: "game:bot-control"; requestId: string; payload: SetBotControlPayload }
+  | { type: "game:play-card"; requestId: string; payload: PlayCardPayload }
+  | { type: "game:draw-card"; requestId: string; payload: ActionRequestPayload }
+  | { type: "game:pass"; requestId: string; payload: ActionRequestPayload }
+  | { type: "game:choose-color"; requestId: string; payload: ChooseColorPayload }
+  | { type: "game:call-uno"; requestId: string; payload: ActionRequestPayload }
+  | { type: "game:catch-uno"; requestId: string; payload: ActionRequestPayload }
+  | { type: "game:challenge-draw-four"; requestId: string; payload: ResolveDrawFourPayload };
+
+export type ClientMessageType = ClientMessage["type"];
+
+export type ProtocolResponse = RoomActionResponse | GameActionResponse | SessionAttachResponse;
+
+export type ServerMessage =
+  | { type: "response"; requestId: string; payload: ProtocolResponse }
+  | { type: "connection:ready"; payload: ConnectionReadyPayload }
+  | { type: "session:attached"; payload: SessionAttachedPayload }
+  | { type: "room:updated"; payload: RoomSnapshot }
+  | { type: "game:started"; payload: GameStartedPayload }
+  | { type: "game:state"; payload: GameSnapshot }
+  | { type: "game:action-rejected"; payload: GameActionRejectedPayload };
 
 export interface ConnectionReadyPayload {
   connectedAt: string;
