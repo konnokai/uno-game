@@ -1,0 +1,26 @@
+{
+  "name": "uno",
+  "private": true,
+  "packageManager": "pnpm@10.15.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @uno/server --filter @uno/web dev",
+    "build": "pnpm --filter @uno/shared build && pnpm --filter @uno/server build && pnpm --filter @uno/web build",
+    "host:local": "pnpm build && pnpm start",
+    "host:public": "pnpm build && concurrently --kill-others --names game,tunnel \"pnpm start\" \"pnpm tunnel\"",
+    "start": "cross-env NODE_ENV=production node apps/server/dist/index.js",
+    "test": "pnpm -r test",
+    "test:all": "pnpm test && pnpm test:e2e",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "tunnel": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-tunnel.ps1",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "concurrently": "^10.0.5",
+    "cross-env": "^10.1.0"
+  }
+}
