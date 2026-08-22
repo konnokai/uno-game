@@ -55,6 +55,46 @@ describe("RoomService", () => {
     expect(service.start("host")).toMatchObject({ ok: true, room: { turnTimeoutSeconds: 45 } });
   });
 
+  it("lets only the host choose the rules mode before starting", () => {
+    const service = new RoomService(createRoomState("ABC234", player("host", "Host", "host-hash")));
+    expect(service.join("Guest", undefined, player("guest", "Guest", "guest-hash"))).toMatchObject({ ok: true });
+    expect(service.attach("host", "host-hash")).toMatchObject({ ok: true });
+    expect(service.attach("guest", "guest-hash")).toMatchObject({ ok: true });
+    expect(service.setReady("guest", true)).toMatchObject({ ok: true });
+
+    expect(service.setRulesMode("guest", "taiwan")).toMatchObject({ ok: false, error: { code: "HOST_ONLY" } });
+    expect(service.setRulesMode("host", "taiwan", {
+      stackingEnabled: true,
+      stackingMode: "draw-four-over-two",
+      sevenZeroEnabled: false,
+      jumpInEnabled: true,
+      drawToMatchEnabled: false,
+      drawFourChallengeEnabled: true,
+      multiCardPlayEnabled: false,
+    })).toMatchObject({
+      ok: true,
+      room: {
+        rulesMode: "taiwan",
+        rulesOptions: {
+          stackingMode: "draw-four-over-two",
+          sevenZeroEnabled: false,
+          drawToMatchEnabled: false,
+        },
+      },
+    });
+    expect(service.start("host")).toMatchObject({ ok: true, room: { rulesMode: "taiwan" } });
+    expect(service.state.game?.rulesMode).toBe("taiwan");
+    expect(service.state.game?.rulesOptions).toMatchObject({
+      stackingMode: "draw-four-over-two",
+      sevenZeroEnabled: false,
+      drawToMatchEnabled: false,
+    });
+    expect(service.setRulesMode("host", "classic")).toMatchObject({
+      ok: false,
+      error: { code: "GAME_ALREADY_STARTED" },
+    });
+  });
+
   it("limits a room to eight players and permits host-controlled bots", () => {
     const service = new RoomService(createRoomState("ABC234", player("host", "Host", "host-hash")), {
       createId: () => "bot-1",

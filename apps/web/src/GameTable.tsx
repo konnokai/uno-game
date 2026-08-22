@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from "react";
 import {
   isCardPlayable,
+  isDrawCardStackable,
   type Card,
   type CardColor,
   type GameAction,
@@ -69,6 +70,10 @@ const CARD_SYMBOLS: Record<string, string> = {
 function cardLabel(card: Card): string {
   const value = typeof card.value === "number" ? String(card.value) : VALUE_LABELS[card.value];
   return `${card.color ? COLOR_LABELS[card.color] : "萬用"} ${value}`;
+}
+
+function isMultiCardValue(value: Card["value"]): boolean {
+  return typeof value === "number" || value === "skip" || value === "reverse" || value === "draw-two";
 }
 
 function compareCards(left: Card, right: Card): number {
@@ -183,7 +188,7 @@ function actionText(action: GameAction, room: RoomSnapshot, card?: Card): string
   switch (action.type) {
     case "start": return `翻開${card ? ` ${cardLabel(card)}` : "起始牌"}，牌局開始`;
     case "choose-color": return `${actor} 選擇${COLOR_LABELS[action.chosenColor!]}`;
-    case "play-card": return `${actor} 打出${card ? ` ${cardLabel(card)}` : "一張牌"}${action.declaredUno ? "，並喊了 UNO！" : ""}`;
+    case "play-card": return `${action.jumpIn ? `${actor} 搶牌打出` : `${actor} 打出`}${action.cardIds && action.cardIds.length > 1 ? ` ${action.cardIds.length} 張${card ? ` ${cardLabel(card)}` : "牌"}` : card ? ` ${cardLabel(card)}` : "一張牌"}${room.rulesMode === "taiwan" && room.rulesOptions.sevenZeroEnabled && card?.value === 7 && target !== "玩家" ? `，和 ${target} 交換手牌` : ""}${room.rulesMode === "taiwan" && room.rulesOptions.sevenZeroEnabled && card?.value === 0 ? "，全員傳遞手牌" : ""}${room.rulesMode === "taiwan" && room.rulesOptions.stackingEnabled && card?.value === "draw-two" && amount > 0 ? `，累積抽 ${amount} 張` : ""}${room.rulesMode === "taiwan" && room.rulesOptions.stackingEnabled && card?.value === "wild-draw-four" && amount > 4 ? `，累積抽 ${amount} 張` : ""}${action.declaredUno ? "，並喊了 UNO！" : ""}`;
     case "draw-card": return `${actor} 抽了 ${amount} 張牌`;
     case "pass": return `${actor} 保留新牌並結束回合`;
     case "call-uno": return `${actor} 喊了 UNO！`;
@@ -286,10 +291,43 @@ function ColorDialog({
   );
 }
 
+function TargetDialog({
+  players,
+  currentPlayerId,
+  onChoose,
+  onClose,
+}: {
+  players: RoomSnapshot["players"];
+  currentPlayerId: string;
+  onChoose: (playerId: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="dialog-backdrop" role="presentation">
+      <section aria-labelledby="target-title" aria-modal="true" className="target-dialog" role="dialog">
+        <p className="eyebrow">SEVEN SWAP</p>
+        <h3 id="target-title">選擇交換手牌的玩家</h3>
+        <p>出 7 後，你會和指定玩家交換剩下的全部手牌。</p>
+        <div className="target-options">
+          {players.filter((player) => player.id !== currentPlayerId).map((player) => (
+            <button className="button secondary" key={player.id} onClick={() => onChoose(player.id)} type="button">
+              <strong>{player.nickname}</strong>
+              <small>{player.isBot ? "機器人" : "玩家"}</small>
+            </button>
+          ))}
+        </div>
+        <button className="text-button" onClick={onClose} type="button">返回手牌</button>
+      </section>
+    </div>
+  );
+}
+
 export function GamePage({ connected, room, game, session, error, onError, onLeave }: GamePageProps) {
   const { roomCode = "" } = useParams();
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
   const [choosingColor, setChoosingColor] = useState(false);
+  const [choosingTarget, setChoosingTarget] = useState(false);
   const [declareUno, setDeclareUno] = useState(false);
   const [handOrder, setHandOrder] = useState<string[]>([]);
   const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
@@ -318,10 +356,13 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
   }, []);
 
   useEffect(() => {
-    if (selectedCardId && !game?.hand.some((card) => card.id === selectedCardId)) {
+    const handIds = new Set(game?.hand.map((card) => card.id) ?? []);
+    setSelectedCardIds((current) => current.filter((cardId) => handIds.has(cardId)));
+    if (selectedCardId && !handIds.has(selectedCardId)) {
       setSelectedCardId(null);
       setDeclareUno(false);
       setChoosingColor(false);
+      setChoosingTarget(false);
     }
   }, [game, selectedCardId]);
 
@@ -415,6 +456,9 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
   const me = room.players.find((player) => player.id === session.playerId);
   const gameMe = game.players.find((player) => player.id === session.playerId);
   const selectedCard = game.hand.find((card) => card.id === selectedCardId) ?? null;
+  const selectedCards = selectedCardIds
+    .map((cardId) => game.hand.find((card) => card.id === cardId))
+    .filter((card): card is Card => card !== undefined);
   const handById = new Map(game.hand.map((card) => [card.id, card]));
   const orderedIdSet = new Set(handOrder);
   const orderedHand = [
@@ -427,22 +471,45 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
   const paused = !connected;
   const isBotManaged = me?.isBotManaged ?? false;
   const isMyTurn = game.currentPlayerId === session.playerId;
+  const isTaiwanRules = game.rulesMode === "taiwan";
   const isPlayingTurn = !paused && !isBotManaged && isMyTurn && game.phase === "playing" && game.currentColor !== null;
-  const selectedCardPlayable = selectedCard !== null &&
-    isPlayingTurn &&
-    (!game.hasDrawnThisTurn || game.drawnCardId === selectedCard.id) &&
-    isCardPlayable(selectedCard, game.topDiscard, game.currentColor!);
+  const isDrawFourTarget = !paused && !isBotManaged && game.phase === "awaiting-draw-four-challenge" &&
+    game.pendingDrawFour?.targetId === session.playerId;
+  const stackableDrawCard = isDrawFourTarget && isTaiwanRules && game.pendingDrawType !== null
+    ? game.hand.find((card) => isDrawCardStackable(game.pendingDrawType, card.value, game.rulesOptions))
+    : undefined;
+  const canStackDrawCard = stackableDrawCard !== undefined;
+  const canJumpIn = !paused && !isBotManaged && isTaiwanRules && game.rulesOptions.jumpInEnabled && !isMyTurn && game.phase === "playing" &&
+    game.currentColor !== null && game.pendingDrawAmount === 0 &&
+    game.hand.some((card) => card.color === game.topDiscard.color && card.value === game.topDiscard.value);
+
+  function isPlayableNow(card: Card): boolean {
+    if (canStackDrawCard) return card.value === stackableDrawCard?.value ||
+      isDrawCardStackable(game!.pendingDrawType, card.value, game!.rulesOptions);
+    if (isPlayingTurn) {
+      return (!game!.hasDrawnThisTurn || game!.drawnCardId === card.id) &&
+        (game!.pendingDrawAmount === 0
+          ? isCardPlayable(card, game!.topDiscard, game!.currentColor!)
+          : isDrawCardStackable(game!.pendingDrawType, card.value, game!.rulesOptions));
+    }
+    return canJumpIn && card.color === game!.topDiscard.color && card.value === game!.topDiscard.value;
+  }
+
+  const selectedCardPlayable = selectedCard !== null && isPlayableNow(selectedCard);
+  const multiSelectEnabled = isPlayingTurn && isTaiwanRules && game.rulesOptions.multiCardPlayEnabled;
+  const selectedBatchPlayable = selectedCards.length > 1 &&
+    multiSelectEnabled &&
+    isMultiCardValue(selectedCards[0]!.value) &&
+    selectedCards.every((card) => card.value === selectedCards[0]!.value) &&
+    selectedCards.every((card) => card.color !== null) &&
+    isPlayableNow(selectedCards[0]!);
+  const selectedPlayValid = selectedCards.length > 1 ? selectedBatchPlayable : selectedCardPlayable;
   const draggingCard = game.hand.find((card) => card.id === draggingCardId) ?? null;
-  const draggingCardPlayable = draggingCard !== null &&
-    isPlayingTurn &&
-    (!game.hasDrawnThisTurn || game.drawnCardId === draggingCard.id) &&
-    isCardPlayable(draggingCard, game.topDiscard, game.currentColor!);
+  const draggingCardPlayable = draggingCard !== null && isPlayableNow(draggingCard);
   const canDraw = isPlayingTurn && !game.hasDrawnThisTurn;
   const canPass = isPlayingTurn && game.hasDrawnThisTurn;
   const canCallUno = !paused && !isBotManaged && game.unoVulnerablePlayerId === session.playerId;
   const canCatchUno = !paused && !isBotManaged && game.unoVulnerablePlayerId !== null && !canCallUno;
-  const isDrawFourTarget = !paused && !isBotManaged && game.phase === "awaiting-draw-four-challenge" &&
-    game.pendingDrawFour?.targetId === session.playerId;
   const shouldChooseStartingColor = !paused && !isBotManaged && game.currentColor === null && isMyTurn && game.phase === "playing";
   const turnRemainingSeconds = game.turnDeadlineAt === null
     ? null
@@ -470,32 +537,38 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
     );
   }
 
-  function submitCard(card: Card, color?: CardColor, withUno = false) {
+  function submitCard(
+    card: Card,
+    color?: CardColor,
+    withUno = false,
+    targetPlayerId?: string,
+    additionalCardIds?: readonly string[],
+  ) {
     run(
       (done) => socket.emit("game:play-card", {
         cardId: card.id,
         requestId: requestId(),
         ...(color ? { chosenColor: color } : {}),
         ...(withUno ? { declareUno: true } : {}),
+        ...(targetPlayerId ? { targetPlayerId } : {}),
+        ...(additionalCardIds && additionalCardIds.length > 0 ? { additionalCardIds: [...additionalCardIds] } : {}),
       }, done),
     );
     setChoosingColor(false);
+    setChoosingTarget(false);
   }
 
   function submitSelectedCard(color?: CardColor) {
-    if (selectedCard) submitCard(selectedCard, color, declareUno);
-  }
-
-  function isPlayableNow(card: Card): boolean {
-    return isPlayingTurn &&
-      (!game!.hasDrawnThisTurn || game!.drawnCardId === card.id) &&
-      isCardPlayable(card, game!.topDiscard, game!.currentColor!);
+    if (selectedCard && selectedCards.length === 1) submitCard(selectedCard, color, declareUno);
   }
 
   function playCardShortcut(card: Card) {
     if (busy || !isPlayableNow(card)) return;
     setSelectedCardId(card.id);
-    if (card.color === null) {
+    setSelectedCardIds([card.id]);
+    if (card.value === 7 && isTaiwanRules && game!.rulesOptions.sevenZeroEnabled) {
+      setChoosingTarget(true);
+    } else if (card.color === null) {
       setChoosingColor(true);
     } else {
       submitCard(card, undefined, declareUno && selectedCardId === card.id);
@@ -503,9 +576,68 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
   }
 
   function playSelected() {
-    if (!selectedCard || !selectedCardPlayable) return;
-    if (selectedCard.color === null) setChoosingColor(true);
+    if (!selectedCard || !selectedPlayValid) return;
+    if (selectedCards.length > 1) {
+      if (selectedCards[0]!.value === 7 && isTaiwanRules && game!.rulesOptions.sevenZeroEnabled) {
+        setChoosingTarget(true);
+        return;
+      }
+      submitCard(selectedCards[0]!, undefined, declareUno, undefined, selectedCards.slice(1).map((card) => card.id));
+      return;
+    }
+    if (selectedCard.value === 7 && isTaiwanRules && game!.rulesOptions.sevenZeroEnabled) setChoosingTarget(true);
+    else if (selectedCard.color === null) setChoosingColor(true);
     else submitSelectedCard();
+  }
+
+  function chooseTarget(targetPlayerId: string) {
+    if (selectedCard) submitCard(
+      selectedCard,
+      undefined,
+      declareUno,
+      targetPlayerId,
+      selectedCards.length > 1 ? selectedCards.slice(1).map((card) => card.id) : undefined,
+    );
+  }
+
+  function stackDrawCard() {
+    const card = stackableDrawCard;
+    if (!card) return;
+    setSelectedCardId(card.id);
+    setSelectedCardIds([card.id]);
+    if (card.value === "wild-draw-four") setChoosingColor(true);
+    else submitCard(card, undefined, declareUno && selectedCardId === card.id);
+  }
+
+  function selectCard(card: Card, detail: number) {
+    if (!multiSelectEnabled || !isMultiCardValue(card.value)) {
+      const isSameCard = card.id === selectedCardId;
+      setSelectedCardId(isSameCard ? null : card.id);
+      setSelectedCardIds(isSameCard ? [] : [card.id]);
+      if (detail === 1 && !isSameCard) setDeclareUno(false);
+      return;
+    }
+
+    const alreadySelected = selectedCardIds.includes(card.id);
+    if (alreadySelected) {
+      const nextIds = selectedCardIds.filter((cardId) => cardId !== card.id);
+      setSelectedCardIds(nextIds);
+      setSelectedCardId(nextIds[0] ?? null);
+      setDeclareUno(false);
+      return;
+    }
+
+    const firstSelected = selectedCards[0];
+    if (firstSelected && (firstSelected.value !== card.value || !isMultiCardValue(firstSelected.value))) {
+      setSelectedCardIds([card.id]);
+      setSelectedCardId(card.id);
+      setDeclareUno(false);
+      return;
+    }
+    const nextIds = [...selectedCardIds, card.id];
+    setSelectedCardIds(nextIds);
+    setSelectedCardId(nextIds[0] ?? card.id);
+    if (detail === 1) setDeclareUno(false);
   }
 
   function normalizedOrder(current: string[]): string[] {
@@ -559,6 +691,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
         <div className="game-room-mark">
           <span>ROOM</span>
           <strong>{room.code}</strong>
+          <small>{isTaiwanRules ? "台灣玩法" : "經典規則"}</small>
         </div>
         <div className={`turn-banner ${isMyTurn ? "is-mine" : ""}`} aria-live="polite">
           <span className={`color-indicator ${game.currentColor ? `color-${game.currentColor}` : "color-wild"}`} />
@@ -567,7 +700,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
               {turnRemainingSeconds === null ? "未啟動倒數" : `剩餘 ${turnRemainingSeconds} 秒`}
               {` · ${game.direction === 1 ? "往下 ↓" : "往上 ↑"} · 目前顏色`}
             </small>
-            <strong>{isMyTurn && isBotManaged ? "機器人正在代管" : isMyTurn ? "輪到你了" : `等待 ${playerName(room, game.currentPlayerId)}`}</strong>
+            <strong>{isMyTurn && isBotManaged ? "機器人正在代管" : isMyTurn ? "輪到你了" : canJumpIn ? "可以搶牌" : `等待 ${playerName(room, game.currentPlayerId)}`}</strong>
           </div>
         </div>
         <button className="text-button" onClick={onLeave} type="button">離開牌桌</button>
@@ -715,12 +848,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
                   draggable={!busy}
                   dragging={draggingCardId === card.id}
                   key={card.id}
-                  onClick={(event) => {
-                    const isSameCard = card.id === selectedCardId;
-                    setSelectedCardId(isSameCard ? null : card.id);
-                    // Keep UNO armed through the two clicks that precede onDoubleClick.
-                    if (event.detail === 1 && !isSameCard) setDeclareUno(false);
-                  }}
+                  onClick={(event) => selectCard(card, event.detail)}
                   onDragEnd={() => {
                     setDraggingCardId(null);
                     setTableDragActive(false);
@@ -741,7 +869,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
                     if (sourceCardId) moveCard(sourceCardId, card.id);
                     setDraggingCardId(null);
                   }}
-                  selected={card.id === selectedCardId}
+                  selected={selectedCardIds.includes(card.id)}
                 />
               );
             })}
@@ -768,8 +896,8 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
 
       <nav aria-label="遊戲操作" className="game-controls">
         <div className="selection-copy">
-          <span>{isBotManaged ? "BOT CONTROL" : selectedCard ? "已選擇" : "選一張可出的牌"}</span>
-          <strong>{isBotManaged ? "機器人代管中" : selectedCard ? cardLabel(selectedCard) : isMyTurn ? "你的回合" : "等待對手"}</strong>
+          <span>{isBotManaged ? "BOT CONTROL" : selectedCards.length > 1 ? `已選擇 ${selectedCards.length} 張` : selectedCard ? "已選擇" : canJumpIn ? "JUMP-IN" : "選一張可出的牌"}</span>
+          <strong>{isBotManaged ? "機器人代管中" : selectedCards.length > 1 ? cardLabel(selectedCards[0]!) : selectedCard ? cardLabel(selectedCard) : canJumpIn ? "可以搶牌" : isMyTurn ? "你的回合" : "等待對手"}</strong>
         </div>
         {game.phase !== "finished" && (
           <button
@@ -802,7 +930,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
             </button>
           </div>
         )}
-        {selectedCardPlayable && game.hand.length === 2 && (
+        {selectedPlayValid && game.hand.length - selectedCards.length === 1 && (
           <button
             aria-pressed={declareUno}
             className={`uno-action ${declareUno ? "is-armed" : ""}`}
@@ -828,14 +956,14 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
              {game.drawnCardId ? "保留並結束" : "結束回合"}
            </button>
          )}
-        {canDraw && (
-          <button className="button secondary" disabled={busy} onClick={() => run((done) => socket.emit("game:draw-card", { requestId: requestId() }, done))} type="button">
-            抽一張牌
-          </button>
-        )}
-        <button className="button primary play-action" disabled={!selectedCardPlayable || busy || paused} onClick={playSelected} type="button">
-          {busy ? "處理中…" : "打出這張牌"}
-        </button>
+         {canDraw && (
+           <button className="button secondary" disabled={busy} onClick={() => run((done) => socket.emit("game:draw-card", { requestId: requestId() }, done))} type="button">
+              {game.pendingDrawAmount > 0 ? `抽 ${game.pendingDrawAmount} 張並跳過` : isTaiwanRules && game.rulesOptions.drawToMatchEnabled ? "抽到能出為止" : "抽一張牌"}
+           </button>
+         )}
+         <button className="button primary play-action" disabled={!selectedPlayValid || busy || paused} onClick={playSelected} type="button">
+           {busy ? "處理中…" : selectedCards.length > 1 ? `打出這 ${selectedCards.length} 張牌` : "打出這張牌"}
+         </button>
       </nav>
       </aside>
 
@@ -862,20 +990,34 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
           <section aria-labelledby="challenge-title" aria-modal="true" className="challenge-dialog" role="dialog">
             <div className="challenge-card"><span>+4</span></div>
             <p className="eyebrow">WILD DRAW FOUR</p>
-            <h3 id="challenge-title">要質疑這張抽四嗎？</h3>
+            <h3 id="challenge-title">{game.rulesOptions.drawFourChallengeEnabled ? "要質疑這張抽四嗎？" : "請接受這張抽四"}</h3>
             {game.pendingDrawFour && (
               <p className="challenge-color-note">
                 <span className={`color-indicator color-${game.pendingDrawFour.chosenColor}`} />
                 對方選擇：<strong>{COLOR_LABELS[game.pendingDrawFour.chosenColor]}</strong>
               </p>
             )}
-            <p>若對方出牌前持有目前顏色，質疑成功，對方抽四；否則你要抽六張。</p>
+            <p>{game.rulesOptions.drawFourChallengeEnabled
+              ? game.pendingDrawAmount > 4
+                ? `目前累積抽 ${game.pendingDrawAmount} 張。`
+                : "若對方出牌前持有目前顏色，質疑成功，對方抽四；否則你要抽六張。"
+              : "目前未開啟 +4 質疑，你需要直接抽取累積張數並跳過回合。"}</p>
             <div className="challenge-actions">
+              {canStackDrawCard && <button className="button secondary" disabled={busy} onClick={stackDrawCard} type="button">疊出 {stackableDrawCard?.value === "wild-draw-four" ? "+4" : "+2"}</button>}
               <button className="button secondary" disabled={busy} onClick={() => run((done) => socket.emit("game:challenge-draw-four", { challenge: false, requestId: requestId() }, done))} type="button">接受並抽四</button>
-              <button className="button primary" disabled={busy} onClick={() => run((done) => socket.emit("game:challenge-draw-four", { challenge: true, requestId: requestId() }, done))} type="button">提出質疑</button>
+              {game.rulesOptions.drawFourChallengeEnabled && <button className="button primary" disabled={busy} onClick={() => run((done) => socket.emit("game:challenge-draw-four", { challenge: true, requestId: requestId() }, done))} type="button">提出質疑</button>}
             </div>
           </section>
         </div>
+      )}
+
+      {choosingTarget && selectedCard?.value === 7 && (
+        <TargetDialog
+          currentPlayerId={session.playerId}
+          onChoose={chooseTarget}
+          onClose={() => setChoosingTarget(false)}
+          players={room.players}
+        />
       )}
 
       {(choosingColor || shouldChooseStartingColor) && (

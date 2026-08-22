@@ -1,5 +1,7 @@
 import {
   CARD_COLORS,
+  isGameRuleOptions,
+  isGameRulesMode,
   type ActionRequestPayload,
   type ClientMessage,
   type CreateRoomPayload,
@@ -12,6 +14,7 @@ import {
   type RoomErrorCode,
   type SessionAttachPayload,
   type SetBotControlPayload,
+  type SetRulesModePayload,
   type SetReadyPayload,
 } from "@uno/shared";
 
@@ -103,16 +106,24 @@ export function parseClientMessage(raw: string | ArrayBuffer):
       break;
     case "room:add-bot":
     case "room:set-turn-timeout":
+    case "room:set-rules-mode":
     case "room:leave":
     case "game:start":
     case "game:rematch":
     case "game:draw-card":
     case "game:pass":
     case "game:call-uno":
-      case "game:catch-uno":
+    case "game:catch-uno":
       if (isActionPayload(payload)) {
         if (value.type === "room:set-turn-timeout" &&
           !isTurnTimeoutSeconds((payload as Record<string, unknown>).seconds)) break;
+        if (value.type === "room:set-rules-mode" &&
+          !isGameRulesMode((payload as Record<string, unknown>).rulesMode)) break;
+        if (value.type === "room:set-rules-mode") {
+          const rulesOptions = (payload as Record<string, unknown>).rulesOptions;
+          if (rulesOptions !== undefined && !isGameRuleOptions(rulesOptions)) break;
+          return { ok: true, message: { type: "room:set-rules-mode", requestId, payload: typedPayload<SetRulesModePayload>(payload) } };
+        }
         return { ok: true, message: { type: value.type, requestId, payload } } as {
           ok: true;
           message: ClientMessage;
@@ -131,15 +142,21 @@ export function parseClientMessage(raw: string | ArrayBuffer):
         return { ok: true, message: { type: "game:bot-control", requestId, payload: typedPayload<SetBotControlPayload>(payload) } };
       }
       break;
-    case "game:play-card":
-      if (isActionPayload(payload) && typeof (payload as Record<string, unknown>).cardId === "string" &&
-        ((payload as Record<string, unknown>).chosenColor === undefined ||
-          isCardColor((payload as Record<string, unknown>).chosenColor)) &&
-        ((payload as Record<string, unknown>).declareUno === undefined ||
-          typeof (payload as Record<string, unknown>).declareUno === "boolean")) {
+    case "game:play-card": {
+      const record = isRecord(payload) ? payload : {};
+      const additionalCardIds = record.additionalCardIds;
+      if (isActionPayload(payload) && typeof record.cardId === "string" &&
+        (additionalCardIds === undefined ||
+          (Array.isArray(additionalCardIds) && additionalCardIds.every((cardId: unknown) =>
+            typeof cardId === "string" && cardId.length > 0 && cardId.length <= 100))) &&
+        (record.targetPlayerId === undefined ||
+          (typeof record.targetPlayerId === "string" && record.targetPlayerId.length <= 100)) &&
+        (record.chosenColor === undefined || isCardColor(record.chosenColor)) &&
+        (record.declareUno === undefined || typeof record.declareUno === "boolean")) {
         return { ok: true, message: { type: "game:play-card", requestId, payload: typedPayload<PlayCardPayload>(payload) } };
       }
       break;
+    }
     case "game:choose-color":
       if (isActionPayload(payload) && isCardColor((payload as Record<string, unknown>).color)) {
         return { ok: true, message: { type: "game:choose-color", requestId, payload: typedPayload<ChooseColorPayload>(payload) } };

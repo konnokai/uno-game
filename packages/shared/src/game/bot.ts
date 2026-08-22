@@ -1,26 +1,33 @@
 import {
   CARD_COLORS,
+  type GameRuleOptions,
   type Card,
   type CardColor,
   type GamePhase,
+  type GameRulesMode,
 } from "./types.js";
-import { isCardPlayable } from "./engine.js";
+import { isCardPlayable, isDrawCardStackable } from "./engine.js";
 
 export interface BotGameView {
   hand: readonly Card[];
   phase: Exclude<GamePhase, "lobby">;
+  rulesMode: GameRulesMode;
+  rulesOptions: GameRuleOptions;
   pendingDrawFour: { targetId: string } | null;
+  pendingDrawAmount: number;
+  pendingDrawType: "draw-two" | "wild-draw-four" | null;
   currentPlayerId: string;
   currentColor: CardColor | null;
   hasDrawnThisTurn: boolean;
   drawnCardId: string | null;
   topDiscard: Card;
+  targetPlayerId?: string;
 }
 
 export type BotDecision =
   | { type: "choose-color"; color: CardColor }
   | { type: "resolve-draw-four" }
-  | { type: "play"; cardId: string; chosenColor?: CardColor; declareUno: boolean }
+  | { type: "play"; cardId: string; chosenColor?: CardColor; targetPlayerId?: string; declareUno: boolean }
   | { type: "draw" }
   | { type: "pass" }
   | { type: "none" };
@@ -37,12 +44,15 @@ function chooseColor(hand: readonly Card[], excludedCardId?: string): CardColor 
   );
 }
 
-function playDecision(card: Card, hand: readonly Card[]): BotDecision {
+function playDecision(card: Card, hand: readonly Card[], game: BotGameView): BotDecision {
   const isWild = card.value === "wild" || card.value === "wild-draw-four";
   return {
     type: "play",
     cardId: card.id,
     ...(isWild ? { chosenColor: chooseColor(hand, card.id) } : {}),
+    ...(card.value === 7 && game.rulesMode === "taiwan" && game.rulesOptions.sevenZeroEnabled && game.targetPlayerId
+      ? { targetPlayerId: game.targetPlayerId }
+      : {}),
     declareUno: hand.length === 2,
   };
 }
@@ -56,12 +66,23 @@ export function decideBotAction(
   if (game.phase === "finished") return { type: "none" };
 
   if (game.phase === "awaiting-draw-four-challenge") {
-    return game.pendingDrawFour?.targetId === botId
-      ? { type: "resolve-draw-four" }
-      : { type: "none" };
+    if (game.pendingDrawFour?.targetId !== botId) return { type: "none" };
+    if (game.rulesMode === "taiwan" && game.rulesOptions.stackingEnabled) {
+      const stacked = game.hand.find((card) =>
+        isDrawCardStackable(game.pendingDrawType, card.value, game.rulesOptions),
+      );
+      if (stacked) return playDecision(stacked, game.hand, game);
+    }
+    return { type: "resolve-draw-four" };
   }
 
-  if (game.currentPlayerId !== botId) return { type: "none" };
+  if (game.currentPlayerId !== botId) {
+    if (game.rulesMode !== "taiwan" || !game.rulesOptions.jumpInEnabled || game.pendingDrawAmount > 0) return { type: "none" };
+    const jumpIn = game.hand.find((card) =>
+      card.color === game.topDiscard.color && card.value === game.topDiscard.value,
+    );
+    return jumpIn ? playDecision(jumpIn, game.hand, game) : { type: "none" };
+  }
   if (game.currentColor === null) {
     return { type: "choose-color", color: chooseColor(game.hand) };
   }
@@ -71,15 +92,23 @@ export function decideBotAction(
       ? game.hand.find((card) => card.id === game.drawnCardId)
       : undefined;
     return drawn && isCardPlayable(drawn, game.topDiscard, game.currentColor!)
-      ? playDecision(drawn, game.hand)
+      ? playDecision(drawn, game.hand, game)
       : { type: "pass" };
+  }
+
+  if (game.pendingDrawAmount > 0) {
+    const stacked = game.hand.find((card) =>
+      isDrawCardStackable(game.pendingDrawType, card.value, game.rulesOptions),
+    );
+    return stacked ? playDecision(stacked, game.hand, game) : { type: "draw" };
   }
 
   // Keep the challenge rule meaningful: a bot may select a playable +4 even
   // when it still holds a card matching the current color.
   const playable = game.hand.filter((card) =>
     isCardPlayable(card, game.topDiscard, game.currentColor!),
-  );
+  ).filter((card) => card.value !== 7 || game.rulesMode !== "taiwan" ||
+    !game.rulesOptions.sevenZeroEnabled || game.targetPlayerId);
   const preferred =
     playable.find((card) => card.color !== null) ??
     playable.find((card) => card.value === "wild") ??
@@ -91,5 +120,5 @@ export function decideBotAction(
     ? [preferred, ...drawFours.filter((card) => card.id !== preferred.id)]
     : [preferred];
   const selected = candidates[Math.floor(random() * candidates.length)] ?? preferred;
-  return playDecision(selected, game.hand);
+  return playDecision(selected, game.hand, game);
 }

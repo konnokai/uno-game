@@ -10,10 +10,18 @@ import {
 } from "./game/engine.js";
 import type {
   CardColor,
+  GameRuleOptions,
+  GameRulesMode,
   GameState,
   RuleResult,
 } from "./game/types.js";
-import { MAX_GAME_PLAYERS } from "./game/types.js";
+import {
+  DEFAULT_GAME_RULES_MODE,
+  DEFAULT_GAME_RULE_OPTIONS,
+  isGameRuleOptions,
+  isGameRulesMode,
+  MAX_GAME_PLAYERS,
+} from "./game/types.js";
 import type {
   GameActionResponse,
   GameHistoryEntry,
@@ -40,6 +48,8 @@ export interface StoredRoomPlayer {
 export interface StoredRoom {
   code: string;
   hostId: string;
+  rulesMode: GameRulesMode;
+  rulesOptions: GameRuleOptions;
   turnTimeoutSeconds: number;
   turnDeadlineAt: number | null;
   players: StoredRoomPlayer[];
@@ -88,9 +98,13 @@ function botGameView(game: GameState, botId: string): BotGameView {
   return {
     hand: bot.hand,
     phase: game.phase,
+    rulesMode: game.rulesMode,
+    rulesOptions: game.rulesOptions,
     pendingDrawFour: game.pendingDrawFour
       ? { targetId: game.pendingDrawFour.targetId }
       : null,
+    pendingDrawAmount: game.pendingDrawAmount,
+    pendingDrawType: game.pendingDrawType,
     currentPlayerId: currentPlayer.id,
     currentColor: game.currentColor,
     hasDrawnThisTurn: game.hasDrawnThisTurn,
@@ -98,13 +112,25 @@ function botGameView(game: GameState, botId: string): BotGameView {
       ? game.drawnCardId
       : null,
     topDiscard,
+    targetPlayerId: game.players.find((player) => player.id !== botId)?.id,
   };
+}
+
+function canJumpIn(game: GameState, playerId: string): boolean {
+  if (game.rulesMode !== "taiwan" || !game.rulesOptions.jumpInEnabled || game.phase !== "playing" ||
+    game.currentColor === null || game.pendingDrawAmount > 0) return false;
+  const topDiscard = game.discardPile.at(-1);
+  const player = game.players.find((candidate) => candidate.id === playerId);
+  return Boolean(topDiscard && player && player.id !== game.players[game.currentPlayerIndex]?.id &&
+    player.hand.some((card) => card.color === topDiscard.color && card.value === topDiscard.value));
 }
 
 export function createRoomState(code: string, player: NewRoomPlayer): StoredRoom {
   return {
     code,
     hostId: player.id,
+    rulesMode: DEFAULT_GAME_RULES_MODE,
+    rulesOptions: { ...DEFAULT_GAME_RULE_OPTIONS },
     turnTimeoutSeconds: DEFAULT_TURN_TIMEOUT_SECONDS,
     turnDeadlineAt: null,
     players: [{
@@ -233,6 +259,30 @@ export class RoomService {
     return { ok: true, room: this.snapshot() };
   }
 
+  setRulesMode(
+    playerId: string,
+    rulesMode: GameRulesMode,
+    rulesOptions?: GameRuleOptions,
+  ): RoomActionResponse {
+    const found = this.findPlayer(playerId);
+    if (!found) return failure("NOT_IN_ROOM", "你不在房間內");
+    if (found.player.id !== this.room.hostId) return failure("HOST_ONLY", "只有房主可以設定遊戲規則");
+    if (this.room.game !== null) return failure("GAME_ALREADY_STARTED", "遊戲開始後不能修改規則");
+    if (!isGameRulesMode(rulesMode)) return failure("INVALID_RULES_MODE", "不支援這個遊戲規則模式");
+    if (rulesOptions !== undefined && !isGameRuleOptions(rulesOptions)) {
+      return failure("INVALID_RULES_OPTIONS", "細項規則設定不正確");
+    }
+    const nextOptions = rulesOptions ?? this.room.rulesOptions;
+    const optionsChanged = Object.keys(DEFAULT_GAME_RULE_OPTIONS).some((key) =>
+      this.room.rulesOptions[key as keyof GameRuleOptions] !== nextOptions[key as keyof GameRuleOptions],
+    );
+    if (this.room.rulesMode === rulesMode && !optionsChanged) return { ok: true, room: this.snapshot() };
+    this.room.rulesMode = rulesMode;
+    this.room.rulesOptions = { ...nextOptions };
+    this.room.version += 1;
+    return { ok: true, room: this.snapshot() };
+  }
+
   addBot(playerId: string): RoomActionResponse {
     const found = this.findPlayer(playerId);
     if (!found) return failure("NOT_IN_ROOM", "你不在房間內");
@@ -301,7 +351,10 @@ export class RoomService {
     )) {
       return failure("PLAYERS_NOT_READY", "所有其他玩家都必須準備完成");
     }
-    this.room.game = startGame(this.room.players.map((player) => player.id));
+    this.room.game = startGame(this.room.players.map((player) => player.id), {
+      rulesMode: this.room.rulesMode,
+      rulesOptions: this.room.rulesOptions,
+    });
     this.room.actionHistory = [this.historyEntry(this.room.game)];
     this.room.players.forEach((player) => {
       player.isReady = player.isBot;
@@ -322,7 +375,10 @@ export class RoomService {
     if (this.room.players.some((player) => !player.isConnected)) {
       return failure("GAME_PAUSED", "有玩家連線中斷，暫時無法重新開始");
     }
-    this.room.game = startGame(this.room.players.map((player) => player.id));
+    this.room.game = startGame(this.room.players.map((player) => player.id), {
+      rulesMode: this.room.rulesMode,
+      rulesOptions: this.room.rulesOptions,
+    });
     this.room.actionHistory = [this.historyEntry(this.room.game)];
     this.room.players.forEach((player) => {
       player.isBotManaged = false;
@@ -390,6 +446,8 @@ export class RoomService {
     return this.applyGameAction(playerId, (game, id) => playCard(game, id, payload.cardId, {
       ...(payload.chosenColor ? { chosenColor: payload.chosenColor } : {}),
       declareUno: payload.declareUno,
+      ...(payload.targetPlayerId ? { targetPlayerId: payload.targetPlayerId } : {}),
+      ...(payload.additionalCardIds ? { additionalCardIds: payload.additionalCardIds } : {}),
     }));
   }
 
@@ -431,6 +489,9 @@ export class RoomService {
         isBotControlled(player) && player.id === this.room.game!.pendingDrawFour?.targetId,
       );
     }
+    if (this.room.game.phase === "playing" && this.room.players.some((player) =>
+      isBotControlled(player) && canJumpIn(this.room.game!, player.id),
+    )) return true;
     const current = this.room.game.players[this.room.game.currentPlayerIndex];
     return this.room.game.phase === "playing" && this.room.players.some((player) =>
       isBotControlled(player) && player.id === current?.id,
@@ -498,9 +559,12 @@ export class RoomService {
       return this.applyRoomGameAction(catcher.id, catchUno).ok;
     }
 
+    const jumpInBot = this.room.game.phase === "playing"
+      ? this.room.players.find((player) => isBotControlled(player) && canJumpIn(this.room.game!, player.id))
+      : undefined;
     const currentId = this.room.game.phase === "awaiting-draw-four-challenge"
       ? this.room.game.pendingDrawFour?.targetId
-      : this.room.game.players[this.room.game.currentPlayerIndex]?.id;
+      : jumpInBot?.id ?? this.room.game.players[this.room.game.currentPlayerIndex]?.id;
     const bot = this.room.players.find((player) =>
       isBotControlled(player) && player.id === currentId,
     );
@@ -517,6 +581,7 @@ export class RoomService {
       case "play":
         result = playCard(this.room.game, bot.id, decision.cardId, {
           ...(decision.chosenColor ? { chosenColor: decision.chosenColor } : {}),
+          ...(decision.targetPlayerId ? { targetPlayerId: decision.targetPlayerId } : {}),
           declareUno: decision.declareUno,
         });
         break;
@@ -548,6 +613,8 @@ export class RoomService {
       code: this.room.code,
       phase: this.room.game?.phase ?? "lobby",
       hostId: this.room.hostId,
+      rulesMode: this.room.rulesMode,
+      rulesOptions: { ...this.room.rulesOptions },
       turnTimeoutSeconds: this.room.turnTimeoutSeconds,
       players: this.room.players.map((player) => ({
         id: player.id,
@@ -657,6 +724,8 @@ export class RoomService {
       throw new RangeError("Cannot create a game snapshot from invalid state");
     }
     return {
+      rulesMode: game.rulesMode,
+      rulesOptions: { ...game.rulesOptions },
       players: game.players.map((candidate) => ({ id: candidate.id, handCount: candidate.hand.length })),
       hand: player.hand.map((card) => ({ ...card })),
       topDiscard: { ...topDiscard },
@@ -669,6 +738,8 @@ export class RoomService {
       drawnCardId: game.drawnCardId && player.hand.some((card) => card.id === game.drawnCardId)
         ? game.drawnCardId
         : null,
+      pendingDrawAmount: game.pendingDrawAmount,
+      pendingDrawType: game.pendingDrawType,
       unoVulnerablePlayerId: game.unoVulnerablePlayerId,
       pendingDrawFour: game.pendingDrawFour
         ? {
@@ -722,8 +793,24 @@ export class RoomService {
   }
 
   private normalizeTimingState(): void {
+    if (!isGameRulesMode(this.room.rulesMode)) {
+      this.room.rulesMode = DEFAULT_GAME_RULES_MODE;
+    }
+    if (!isGameRuleOptions(this.room.rulesOptions)) {
+      this.room.rulesOptions = { ...DEFAULT_GAME_RULE_OPTIONS };
+    }
+    if (this.room.game && !isGameRulesMode(this.room.game.rulesMode)) {
+      this.room.game.rulesMode = this.room.rulesMode;
+    }
+    if (this.room.game && !isGameRuleOptions(this.room.game.rulesOptions)) {
+      this.room.game.rulesOptions = { ...this.room.rulesOptions };
+    }
     if (this.room.game && this.room.game.hasDrawnThisTurn === undefined) {
       this.room.game.hasDrawnThisTurn = this.room.game.drawnCardId !== null;
+    }
+    if (this.room.game && this.room.game.pendingDrawAmount === undefined) {
+      this.room.game.pendingDrawAmount = 0;
+      this.room.game.pendingDrawType = null;
     }
     if (!Number.isSafeInteger(this.room.turnTimeoutSeconds) || this.room.turnTimeoutSeconds <= 0) {
       this.room.turnTimeoutSeconds = DEFAULT_TURN_TIMEOUT_SECONDS;

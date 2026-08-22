@@ -5,6 +5,7 @@ import {
   catchUno,
   chooseStartingColor,
   drawCard,
+  isDrawCardStackable,
   isCardPlayable,
   isWildDrawFourLegal,
   nextPlayerIndex,
@@ -13,11 +14,13 @@ import {
   resolveDrawFour,
   startGame,
 } from "./engine";
+import { DEFAULT_GAME_RULE_OPTIONS } from "./types";
 import type {
   Card,
   CardColor,
   CardValue,
   Direction,
+  GameRuleOptions,
   GameState,
 } from "./types";
 
@@ -35,9 +38,13 @@ function stateWith(options: {
   currentColor?: CardColor;
   currentPlayerIndex?: number;
   direction?: Direction;
+  rulesMode?: "classic" | "taiwan";
+  rulesOptions?: Partial<GameRuleOptions>;
 }): GameState {
   const top = options.top ?? card(5, "red");
   return {
+    rulesMode: options.rulesMode ?? "classic",
+    rulesOptions: { ...DEFAULT_GAME_RULE_OPTIONS, ...(options.rulesOptions ?? {}) },
     players: options.hands.map((hand, index) => ({
       id: `p${index + 1}`,
       hand: [...hand],
@@ -50,6 +57,8 @@ function stateWith(options: {
     phase: "playing",
     hasDrawnThisTurn: false,
     drawnCardId: null,
+    pendingDrawAmount: 0,
+    pendingDrawType: null,
     unoVulnerablePlayerId: null,
     pendingDrawFour: null,
     winnerId: null,
@@ -316,6 +325,374 @@ describe("turn order and effects", () => {
     expect(next.winnerId).toBe("p1");
     expect(next.players[1]!.hand).toHaveLength(3);
   });
+
+  it("stacks matching draw-two cards in Taiwan mode", () => {
+    const first = card("draw-two", "red");
+    const second = card("draw-two", "blue");
+    const state = stateWith({
+      rulesMode: "taiwan",
+      hands: [[first, card(1)], [second, card(2)], [card(3)]],
+      drawPile: Array.from({ length: 4 }, (_, index) => card(index, "green")),
+    });
+
+    const stacked = expectAccepted(playCard(state, "p1", first.id));
+    expect(stacked.pendingDrawAmount).toBe(2);
+    expect(stacked.currentPlayerIndex).toBe(1);
+
+    const twiceStacked = expectAccepted(playCard(stacked, "p2", second.id));
+    expect(twiceStacked.pendingDrawAmount).toBe(4);
+    expect(twiceStacked.currentPlayerIndex).toBe(2);
+
+    const drawn = drawCard(twiceStacked, "p3");
+    expect(drawn).toMatchObject({
+      ok: true,
+      state: { pendingDrawAmount: 0, currentPlayerIndex: 0 },
+    });
+    if (drawn.ok) expect(drawn.state.players[2]!.hand).toHaveLength(5);
+  });
+
+  it("applies each Taiwan stacking mode to +2 and +4 combinations", () => {
+    expect(isDrawCardStackable("draw-two", "draw-two", {
+      stackingEnabled: true,
+      stackingMode: "same-type",
+    })).toBe(true);
+    expect(isDrawCardStackable("draw-two", "wild-draw-four", {
+      stackingEnabled: true,
+      stackingMode: "same-type",
+    })).toBe(false);
+    expect(isDrawCardStackable("wild-draw-four", "draw-two", {
+      stackingEnabled: true,
+      stackingMode: "same-type",
+    })).toBe(false);
+    expect(isDrawCardStackable("draw-two", "wild-draw-four", {
+      stackingEnabled: true,
+      stackingMode: "draw-four-over-two",
+    })).toBe(true);
+    expect(isDrawCardStackable("wild-draw-four", "draw-two", {
+      stackingEnabled: true,
+      stackingMode: "draw-four-over-two",
+    })).toBe(false);
+    expect(isDrawCardStackable("draw-two", "wild-draw-four", {
+      stackingEnabled: true,
+      stackingMode: "mixed",
+    })).toBe(true);
+    expect(isDrawCardStackable("wild-draw-four", "draw-two", {
+      stackingEnabled: true,
+      stackingMode: "mixed",
+    })).toBe(true);
+    expect(isDrawCardStackable("draw-two", "draw-two", {
+      stackingEnabled: false,
+      stackingMode: "mixed",
+    })).toBe(false);
+  });
+
+  it("rejects a disallowed mixed stack without mutating the state", () => {
+    const drawTwo = card("draw-two", "red");
+    const drawFour = card("wild-draw-four", null);
+    const state = stateWith({
+      rulesMode: "taiwan",
+      rulesOptions: { stackingMode: "same-type" },
+      hands: [[drawTwo, card(1)], [drawFour, card(2)], [card(3)]],
+      drawPile: Array.from({ length: 8 }, (_, index) => card(index, "green")),
+    });
+    const pending = expectAccepted(playCard(state, "p1", drawTwo.id));
+    const result = playCard(pending, "p2", drawFour.id, { chosenColor: "blue" });
+
+    expect(result).toMatchObject({ ok: false, error: { code: "CARD_NOT_PLAYABLE" } });
+    expect(pending.pendingDrawAmount).toBe(2);
+    expect(pending.players[1]!.hand).toContainEqual(drawFour);
+  });
+
+  it("allows a +4 to stack on +2 only in the large-over-small mode", () => {
+    for (const stackingMode of ["draw-four-over-two", "mixed"] as const) {
+      const drawTwo = card("draw-two", "red");
+      const drawFour = card("wild-draw-four", null);
+      const state = stateWith({
+        rulesMode: "taiwan",
+        rulesOptions: { stackingMode },
+        hands: [[drawTwo, card(1)], [drawFour, card(2)], [card(3)]],
+        drawPile: Array.from({ length: 8 }, (_, index) => card(index, "green")),
+      });
+      const pending = expectAccepted(playCard(state, "p1", drawTwo.id));
+      const stacked = playCard(pending, "p2", drawFour.id, { chosenColor: "blue" });
+
+      expect(stacked).toMatchObject({
+        ok: true,
+        state: { pendingDrawAmount: 6, phase: "awaiting-draw-four-challenge" },
+      });
+    }
+  });
+
+  it("allows +2 to stack on +4 only in mixed mode", () => {
+    for (const stackingMode of ["same-type", "draw-four-over-two"] as const) {
+      const drawFour = card("wild-draw-four", null);
+      const drawTwo = card("draw-two", "red");
+      const state = stateWith({
+        rulesMode: "taiwan",
+        rulesOptions: { stackingMode },
+        hands: [[drawFour, card(1)], [drawTwo, card(2)], [card(3)]],
+        drawPile: Array.from({ length: 8 }, (_, index) => card(index, "green")),
+      });
+      const pending = expectAccepted(playCard(state, "p1", drawFour.id, { chosenColor: "blue" }));
+      const result = playCard(pending, "p2", drawTwo.id);
+
+      expect(result).toMatchObject({ ok: false, error: { code: "CARD_NOT_PLAYABLE" } });
+    }
+
+    const drawFour = card("wild-draw-four", null);
+    const drawTwo = card("draw-two", "red");
+    const state = stateWith({
+      rulesMode: "taiwan",
+      rulesOptions: { stackingMode: "mixed" },
+      hands: [[drawFour, card(1)], [drawTwo, card(2)], [card(3)]],
+      drawPile: Array.from({ length: 8 }, (_, index) => card(index, "green")),
+    });
+    const pending = expectAccepted(playCard(state, "p1", drawFour.id, { chosenColor: "blue" }));
+    expect(playCard(pending, "p2", drawTwo.id)).toMatchObject({
+      ok: true,
+      state: { pendingDrawAmount: 6, phase: "playing" },
+    });
+  });
+
+  it("keeps stacking disabled while still applying the first draw penalty", () => {
+    const first = card("draw-two", "red");
+    const second = card("draw-two", "blue");
+    const state = stateWith({
+      rulesMode: "taiwan",
+      rulesOptions: { stackingEnabled: false },
+      hands: [[first, card(1)], [second, card(2)], [card(3)]],
+      drawPile: Array.from({ length: 8 }, (_, index) => card(index, "green")),
+    });
+    const pending = expectAccepted(playCard(state, "p1", first.id));
+    const result = playCard(pending, "p2", second.id);
+
+    expect(result).toMatchObject({ ok: false, error: { code: "CARD_NOT_PLAYABLE" } });
+    expect(pending.pendingDrawAmount).toBe(2);
+  });
+
+  it("plays multiple matching cards as one Taiwan action", () => {
+    const first = card(5, "red");
+    const second = card(5, "blue");
+    const state = stateWith({
+      rulesMode: "taiwan",
+      rulesOptions: { multiCardPlayEnabled: true },
+      hands: [[first, second, card(1, "green")], [card(2, "yellow")]],
+    });
+
+    const result = playCard(state, "p1", first.id, {
+      additionalCardIds: [second.id],
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      state: {
+        currentPlayerIndex: 1,
+        currentColor: "blue",
+        lastAction: { cardId: first.id, cardIds: [first.id, second.id] },
+      },
+    });
+    if (result.ok) expect(result.state.players[0]!.hand.map((card) => card.value)).toEqual([1]);
+  });
+
+  it("finishes when a multi-card play removes the last hand cards", () => {
+    const first = card(5, "red");
+    const second = card(5, "blue");
+    const state = stateWith({
+      rulesMode: "taiwan",
+      rulesOptions: { multiCardPlayEnabled: true },
+      hands: [[first, second], [card(2, "yellow")]],
+    });
+
+    const result = expectAccepted(playCard(state, "p1", first.id, {
+      additionalCardIds: [second.id],
+    }));
+
+    expect(result.phase).toBe("finished");
+    expect(result.winnerId).toBe("p1");
+    expect(result.currentColor).toBe("blue");
+    expect(result.pendingDrawAmount).toBe(0);
+    expect(result.unoVulnerablePlayerId).toBeNull();
+  });
+
+  it("rejects multi-card play when disabled or when values differ", () => {
+    const first = card(5, "red");
+    const second = card(5, "blue");
+    const disabled = stateWith({
+      rulesMode: "taiwan",
+      hands: [[first, second], [card(2)]],
+    });
+    expect(playCard(disabled, "p1", first.id, { additionalCardIds: [second.id] })).toMatchObject({
+      ok: false,
+      error: { code: "CARD_NOT_PLAYABLE" },
+    });
+
+    const different = card(6, "green");
+    const enabled = stateWith({
+      rulesMode: "taiwan",
+      rulesOptions: { multiCardPlayEnabled: true },
+      hands: [[first, different], [card(2)]],
+    });
+    expect(playCard(enabled, "p1", first.id, { additionalCardIds: [different.id] })).toMatchObject({
+      ok: false,
+      error: { code: "CARD_NOT_PLAYABLE" },
+    });
+  });
+
+  it("accumulates a multi-card draw-two penalty", () => {
+    const first = card("draw-two", "red");
+    const second = card("draw-two", "blue");
+    const state = stateWith({
+      rulesMode: "taiwan",
+      rulesOptions: { multiCardPlayEnabled: true },
+      hands: [[first, second, card(1)], [card(2)], [card(3)]],
+    });
+
+    const result = playCard(state, "p1", first.id, { additionalCardIds: [second.id] });
+
+    expect(result).toMatchObject({
+      ok: true,
+      state: { pendingDrawAmount: 4, pendingDrawType: "draw-two", currentPlayerIndex: 1 },
+    });
+    if (result.ok) expect(result.state.unoVulnerablePlayerId).toBe("p1");
+  });
+
+  it("allows a Taiwan player to jump in with an identical card", () => {
+    const jumpIn = card(5, "red");
+    const state = stateWith({
+      rulesMode: "taiwan",
+      hands: [[card(1, "red")], [jumpIn, card(2)], [card(3)]],
+    });
+
+    const next = expectAccepted(playCard(state, "p2", jumpIn.id));
+
+    expect(next.lastAction.jumpIn).toBe(true);
+    expect(next.lastAction.playerId).toBe("p2");
+    expect(next.currentPlayerIndex).toBe(2);
+  });
+
+  it("exchanges hands on seven and passes all hands on zero in Taiwan mode", () => {
+    const seven = card(7, "red");
+    const state = stateWith({
+      rulesMode: "taiwan",
+      hands: [[seven, card(1, "blue")], [card(2, "yellow"), card(3, "yellow")], [card(4, "green")]],
+    });
+    const exchanged = expectAccepted(playCard(state, "p1", seven.id, { targetPlayerId: "p2" }));
+
+    expect(exchanged.players[0]!.hand.map((card) => card.value)).toEqual([2, 3]);
+    expect(exchanged.players[1]!.hand.map((card) => card.value)).toEqual([1]);
+    expect(exchanged.lastAction.targetPlayerId).toBe("p2");
+    expect(exchanged.unoVulnerablePlayerId).toBeNull();
+
+    const zero = card(0, "red");
+    const passing = stateWith({
+      rulesMode: "taiwan",
+      hands: [[zero, card(1, "red")], [card(2, "blue")], [card(3, "green")]],
+    });
+    const passed = expectAccepted(playCard(passing, "p1", zero.id));
+
+    expect(passed.players[0]!.hand.map((card) => card.value)).toEqual([3]);
+    expect(passed.players[1]!.hand.map((card) => card.value)).toEqual([1]);
+    expect(passed.players[2]!.hand.map((card) => card.value)).toEqual([2]);
+    expect(passed.unoVulnerablePlayerId).toBe("p1");
+  });
+
+  it("applies 7-0 effects before deciding multi-card UNO status", () => {
+    const seven = card(7, "red");
+    const secondSeven = card(7, "blue");
+    const exchanged = stateWith({
+      rulesMode: "taiwan",
+      rulesOptions: { multiCardPlayEnabled: true },
+      hands: [[seven, secondSeven, card(1, "green")], [card(2), card(3)]],
+    });
+    const sevenResult = expectAccepted(playCard(exchanged, "p1", seven.id, {
+      additionalCardIds: [secondSeven.id],
+      declareUno: true,
+      targetPlayerId: "p2",
+    }));
+
+    expect(sevenResult.currentColor).toBe("blue");
+    expect(sevenResult.players[0]!.hand.map((card) => card.value)).toEqual([2, 3]);
+    expect(sevenResult.unoVulnerablePlayerId).toBeNull();
+    expect(sevenResult.lastAction.declaredUno).toBeUndefined();
+
+    const zero = card(0, "red");
+    const secondZero = card(0, "blue");
+    const passed = stateWith({
+      rulesMode: "taiwan",
+      rulesOptions: { multiCardPlayEnabled: true },
+      hands: [[zero, secondZero, card(1, "red")], [card(2, "yellow")], [card(3, "green"), card(4, "green")]],
+    });
+    const zeroResult = expectAccepted(playCard(passed, "p1", zero.id, {
+      additionalCardIds: [secondZero.id],
+      declareUno: true,
+    }));
+
+    expect(zeroResult.currentColor).toBe("blue");
+    expect(zeroResult.players.map((player) => player.hand.map((card) => card.value))).toEqual([
+      [3, 4],
+      [1],
+      [2],
+    ]);
+    expect(zeroResult.currentPlayerIndex).toBe(1);
+    expect(zeroResult.unoVulnerablePlayerId).toBeNull();
+    expect(zeroResult.lastAction.declaredUno).toBeUndefined();
+  });
+
+  it("treats 7 and 0 as ordinary numbers when 7-0 is disabled", () => {
+    const seven = card(7, "red");
+    const state = stateWith({
+      rulesMode: "taiwan",
+      rulesOptions: { sevenZeroEnabled: false },
+      hands: [[seven, card(1, "blue")], [card(2, "yellow"), card(3, "yellow")], [card(4, "green")]],
+    });
+    const playedSeven = expectAccepted(playCard(state, "p1", seven.id));
+
+    expect(playedSeven.players[0]!.hand.map((card) => card.value)).toEqual([1]);
+    expect(playedSeven.players[1]!.hand.map((card) => card.value)).toEqual([2, 3]);
+
+    const zero = card(0, "red");
+    const zeroState = stateWith({
+      rulesMode: "taiwan",
+      rulesOptions: { sevenZeroEnabled: false },
+      hands: [[zero, card(1, "red")], [card(2, "blue")], [card(3, "green")]],
+    });
+    const playedZero = expectAccepted(playCard(zeroState, "p1", zero.id));
+
+    expect(playedZero.players.map((player) => player.hand.map((card) => card.value))).toEqual([[1], [2], [3]]);
+  });
+
+  it("requires the current turn when Jump-In is disabled", () => {
+    const jumpIn = card(5, "red");
+    const state = stateWith({
+      rulesMode: "taiwan",
+      rulesOptions: { jumpInEnabled: false },
+      hands: [[card(1, "red")], [jumpIn, card(2)], [card(3)]],
+    });
+
+    expect(playCard(state, "p2", jumpIn.id)).toMatchObject({
+      ok: false,
+      error: { code: "NOT_YOUR_TURN" },
+    });
+  });
+
+  it("stacks draw four cards before resolving the challenge in Taiwan mode", () => {
+    const first = card("wild-draw-four", null);
+    const second = card("wild-draw-four", null);
+    const state = stateWith({
+      rulesMode: "taiwan",
+      hands: [[first], [second], [card(3)]],
+      drawPile: Array.from({ length: 10 }, (_, index) => card(index, "green")),
+    });
+
+    const firstPending = expectAccepted(playCard(state, "p1", first.id, { chosenColor: "blue" }));
+    const secondPending = expectAccepted(playCard(firstPending, "p2", second.id, { chosenColor: "yellow" }));
+    expect(secondPending.pendingDrawAmount).toBe(8);
+    expect(secondPending.pendingDrawFour?.attackerId).toBe("p2");
+
+    const accepted = resolveDrawFour(secondPending, "p3", false);
+    expect(accepted).toMatchObject({ ok: true, state: { currentPlayerIndex: 0, pendingDrawAmount: 0 } });
+    if (accepted.ok) expect(accepted.state.players[2]!.hand).toHaveLength(9);
+  });
 });
 
 describe("drawing and reshuffling", () => {
@@ -339,6 +716,35 @@ describe("drawing and reshuffling", () => {
 
     const played = expectAccepted(playCard(drawResult.state, "p1", drawn.id));
     expect(played.currentPlayerIndex).toBe(1);
+  });
+
+  it("draws until a playable card appears in Taiwan mode", () => {
+    const playable = card(7, "red");
+    const state = stateWith({
+      rulesMode: "taiwan",
+      hands: [[card(1, "green")], [card(2, "blue")]],
+      drawPile: [playable, card(8, "blue")],
+    });
+
+    const drawn = drawCard(state, "p1");
+
+    expect(drawn).toMatchObject({ ok: true, state: { currentPlayerIndex: 0, drawnCardId: playable.id } });
+    if (drawn.ok) expect(drawn.state.players[0]!.hand).toHaveLength(3);
+  });
+
+  it("draws only one card when draw-to-match is disabled", () => {
+    const drawnCard = card(8, "blue");
+    const state = stateWith({
+      rulesMode: "taiwan",
+      rulesOptions: { drawToMatchEnabled: false },
+      hands: [[card(1, "green")], [card(2, "blue")]],
+      drawPile: [card(7, "red"), drawnCard],
+    });
+
+    const drawn = drawCard(state, "p1");
+
+    expect(drawn).toMatchObject({ ok: true, state: { drawnCardId: drawnCard.id } });
+    if (drawn.ok) expect(drawn.state.players[0]!.hand).toHaveLength(2);
   });
 
   it("lets a player pass after drawing a playable card", () => {
@@ -558,6 +964,22 @@ describe("wild draw four challenges", () => {
       expect(resolved.state.players[1]!.hand).toHaveLength(7);
       expect(resolved.state.currentPlayerIndex).toBe(2);
     }
+  });
+
+  it("rejects a challenge when the +4 challenge option is disabled", () => {
+    const drawFour = card("wild-draw-four", null);
+    const state = stateWith({
+      rulesOptions: { drawFourChallengeEnabled: false },
+      hands: [[drawFour, card(9, "blue")], [card(3)], [card(4)]],
+      drawPile: Array.from({ length: 7 }, (_, index) => card(index, "green")),
+    });
+    const pending = expectAccepted(playCard(state, "p1", drawFour.id, { chosenColor: "blue" }));
+
+    expect(resolveDrawFour(pending, "p2", true)).toMatchObject({
+      ok: false,
+      error: { code: "DRAW_FOUR_CHALLENGE_DISABLED" },
+    });
+    expect(pending.phase).toBe("awaiting-draw-four-challenge");
   });
 
   it("defers victory until a final draw four challenge is resolved", () => {

@@ -3,7 +3,9 @@ import type {
   CardColor,
   Direction,
   GameAction,
+  GameRuleOptions,
   GamePhase,
+  GameRulesMode,
   RuleError,
 } from "./game/types.js";
 
@@ -40,6 +42,8 @@ export interface RoomSnapshot {
   code: string;
   phase: GamePhase;
   hostId: string;
+  rulesMode: GameRulesMode;
+  rulesOptions: GameRuleOptions;
   turnTimeoutSeconds: number;
   players: RoomPlayer[];
   canStart: boolean;
@@ -92,6 +96,11 @@ export interface SetTurnTimeoutPayload extends ActionRequestPayload {
   seconds: number;
 }
 
+export interface SetRulesModePayload extends ActionRequestPayload {
+  rulesMode: GameRulesMode;
+  rulesOptions?: GameRuleOptions;
+}
+
 export interface ActionRequestPayload {
   requestId: string;
 }
@@ -115,6 +124,8 @@ export type RoomErrorCode =
   | "BOT_CONTROL_UNAVAILABLE"
   | "BOT_CONTROL_ACTIVE"
   | "INVALID_TURN_TIMEOUT"
+  | "INVALID_RULES_MODE"
+  | "INVALID_RULES_OPTIONS"
   | "GAME_NOT_FINISHED"
   | "GAME_PAUSED"
   | "RATE_LIMITED"
@@ -140,6 +151,7 @@ export type RoomActionName =
   | "room:add-bot"
   | "room:remove-bot"
   | "room:set-turn-timeout"
+  | "room:set-rules-mode"
   | "room:leave"
   | "game:start"
   | "game:rematch"
@@ -180,6 +192,8 @@ export interface GameHistoryEntry {
 
 /** A player-specific view. Only `hand` contains private card data. */
 export interface GameSnapshot {
+  rulesMode: GameRulesMode;
+  rulesOptions: GameRuleOptions;
   players: PublicGamePlayer[];
   hand: Card[];
   topDiscard: Card;
@@ -190,6 +204,8 @@ export interface GameSnapshot {
   phase: Exclude<GamePhase, "lobby">;
   hasDrawnThisTurn: boolean;
   drawnCardId: string | null;
+  pendingDrawAmount: number;
+  pendingDrawType: "draw-two" | "wild-draw-four" | null;
   unoVulnerablePlayerId: string | null;
   pendingDrawFour: PublicPendingDrawFour | null;
   winnerId: string | null;
@@ -203,6 +219,8 @@ export interface PlayCardPayload {
   cardId: string;
   chosenColor?: CardColor;
   declareUno?: boolean;
+  targetPlayerId?: string;
+  additionalCardIds?: string[];
   requestId: string;
 }
 
@@ -247,6 +265,7 @@ export type ClientMessage =
   | { type: "room:add-bot"; requestId: string; payload: ActionRequestPayload }
   | { type: "room:remove-bot"; requestId: string; payload: RemoveBotPayload }
   | { type: "room:set-turn-timeout"; requestId: string; payload: SetTurnTimeoutPayload }
+  | { type: "room:set-rules-mode"; requestId: string; payload: SetRulesModePayload }
   | { type: "room:leave"; requestId: string; payload: ActionRequestPayload }
   | { type: "game:start"; requestId: string; payload: ActionRequestPayload }
   | { type: "game:rematch"; requestId: string; payload: ActionRequestPayload }

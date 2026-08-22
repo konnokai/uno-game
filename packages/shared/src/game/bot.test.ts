@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_GAME_RULE_OPTIONS } from "./types.js";
 import type { Card } from "./types.js";
 import { decideBotAction, type BotGameView } from "./bot.js";
 
@@ -13,9 +14,13 @@ function gameWithBot(hand: Card[], overrides: Partial<BotGameView> = {}): BotGam
     currentColor: "red",
     currentPlayerId: "bot",
     phase: "playing",
+    rulesMode: "classic",
+    rulesOptions: { ...DEFAULT_GAME_RULE_OPTIONS },
     hasDrawnThisTurn: false,
     drawnCardId: null,
     pendingDrawFour: null,
+    pendingDrawAmount: 0,
+    pendingDrawType: null,
     ...overrides,
   };
 }

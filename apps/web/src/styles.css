@@ -181,6 +181,8 @@ input:focus { border-color: #facc15; box-shadow: 0 0 0 1px #facc15; }
 }
 .room-code-card span { display: block; color: #9e9668; font-size: 0.7rem; font-weight: 800; letter-spacing: 0.16em; }
 .room-code-card strong { color: #facc15; font-size: clamp(1.8rem, 6vw, 3rem); letter-spacing: 0.13em; }
+.room-code-actions { display: grid; justify-items: end; gap: 0.55rem; }
+.room-code-actions small { color: #fef08a; font-size: 0.72rem; font-weight: 850; }
 
 .lobby-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(17rem, 0.7fr); gap: 1.2rem; }
 .players-panel { padding: clamp(1.2rem, 3vw, 2rem); }
@@ -211,6 +213,28 @@ input:focus { border-color: #facc15; box-shadow: 0 0 0 1px #facc15; }
 .timeout-input-row > span { color: #aebdb6; font-size: 0.8rem; }
 .lobby-controls .timeout-input-row .button { width: auto; min-height: 2.7rem; margin-top: 0; padding: 0.55rem 0.8rem; }
 .timeout-setting small { display: block; margin-top: 0.55rem; color: #71877c; font-size: 0.68rem; line-height: 1.45; }
+.rules-mode-setting { margin-top: 1.25rem; padding: 0.85rem; border: 1px solid #5d531b; background: #171b0d; }
+.rules-mode-setting label, .rules-mode-readonly span { display: block; color: #c9bd75; font-size: 0.68rem; font-weight: 850; letter-spacing: 0.1em; }
+.rules-mode-setting select { width: 100%; min-height: 2.7rem; margin-top: 0.45rem; padding: 0.55rem 0.65rem; border: 1px solid #776b24; background: #28230a; color: #fff; }
+.rules-mode-setting small { display: block; margin-top: 0.55rem; color: #b9b58f; font-size: 0.68rem; line-height: 1.45; }
+.rules-mode-setting .button { margin-top: 0.8rem; }
+.rules-detail-setting { min-inline-size: 0; margin: 0.9rem 0 0; padding: 0.75rem; border: 1px solid #4f491d; }
+.rules-detail-setting legend { padding: 0 0.35rem; color: #fef08a; font-size: 0.72rem; font-weight: 850; letter-spacing: 0.08em; }
+.rules-toggle, .rules-radio { display: flex !important; align-items: center; gap: 0.55rem; margin-top: 0.65rem; color: #d6d8b2 !important; font-size: 0.78rem !important; font-weight: 700 !important; letter-spacing: 0 !important; }
+.rules-toggle-row { display: flex; align-items: center; gap: 0.55rem; }
+.rules-toggle-row .rules-toggle { flex: 1; }
+.rules-toggle input, .rules-radio input { width: 1rem; min-height: 1rem; flex: 0 0 auto; margin: 0; accent-color: #facc15; }
+.stacking-mode-options { margin-top: 0.85rem; padding-left: 1.35rem; }
+.stacking-mode-options > span { display: block; color: #aeb58a; font-size: 0.7rem; font-weight: 800; }
+.stacking-mode-options .rules-radio { margin-top: 0.45rem; color: #aeb58a !important; font-size: 0.72rem !important; }
+.rule-hint { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; }
+.rule-hint-button { display: inline-grid; place-items: center; width: 1.25rem; height: 1.25rem; padding: 0; border: 1px solid #a99b3d; border-radius: 50%; background: transparent; color: #fef08a; font-size: 0.7rem; font-weight: 900; line-height: 1; }
+.rule-hint-button:hover, .rule-hint-button:focus-visible { border-color: #fde047; color: #fff; outline: 2px solid rgba(250, 204, 21, 0.25); outline-offset: 2px; }
+.rule-tooltip { position: absolute; z-index: 20; right: 0; bottom: calc(100% + 0.6rem); width: min(18rem, 70vw); padding: 0.75rem 0.85rem; border: 1px solid #8b7f2e; background: #211d09; color: #f5f3c7; box-shadow: 0.5rem 0.5rem 0 rgba(0, 0, 0, 0.25); font-size: 0.72rem; font-weight: 600; line-height: 1.55; opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(0.25rem); transition: opacity 140ms ease, transform 140ms ease, visibility 0s linear 520ms; transition-delay: 0s, 0s, 520ms; }
+.rule-hint:hover .rule-tooltip, .rule-hint:focus-within .rule-tooltip { opacity: 1; visibility: visible; transform: translateY(0); transition-delay: 520ms, 520ms, 0s; }
+.rules-mode-readonly { margin: 1.25rem 0; padding: 0.85rem; border: 1px solid #30483d; background: #07160f; }
+.rules-mode-readonly strong { display: block; margin-top: 0.35rem; color: #fef08a; font-size: 0.9rem; }
+.rules-mode-readonly small { display: block; margin-top: 0.45rem; color: #aebdb6; font-size: 0.68rem; line-height: 1.5; }
 
 .game-page, .status-page { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; }
 .game-roster { display: flex; flex-wrap: wrap; gap: 0.65rem; }
@@ -238,6 +262,7 @@ input:focus { border-color: #facc15; box-shadow: 0 0 0 1px #facc15; }
   .room-header { align-items: flex-start; flex-direction: column; }
   .room-code-card { align-items: stretch; flex-direction: column; }
   .room-code-card .button { width: 100%; }
+  .room-code-actions { justify-items: stretch; }
   .player-list li { grid-template-columns: 2rem minmax(0, 1fr) auto; }
   .player-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .actions, .actions .button { width: 100%; }
@@ -274,6 +299,7 @@ input:focus { border-color: #facc15; box-shadow: 0 0 0 1px #facc15; }
 .game-room-mark { display: flex; align-items: baseline; gap: 0.7rem; }
 .game-room-mark span { color: #70837a; font-size: 0.62rem; font-weight: 900; letter-spacing: 0.18em; }
 .game-room-mark strong { color: #facc15; font-size: 1rem; letter-spacing: 0.14em; }
+.game-room-mark small { color: #b9b58f; font-size: 0.62rem; font-weight: 800; }
 
 .turn-banner {
   position: relative;
@@ -598,9 +624,15 @@ input:focus { border-color: #facc15; box-shadow: 0 0 0 1px #facc15; }
 
 .dialog-backdrop, .result-backdrop, .pause-backdrop { position: fixed; z-index: 40; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgba(2, 9, 6, 0.83); backdrop-filter: blur(9px); }
 .color-dialog, .challenge-dialog, .result-panel { width: min(100%, 36rem); padding: clamp(1.5rem, 5vw, 2.5rem); border: 1px solid #40584d; background: #091b14; box-shadow: 1.2rem 1.2rem 0 rgba(0,0,0,0.35); }
+.target-dialog { width: min(100%, 34rem); padding: clamp(1.5rem, 5vw, 2.5rem); border: 1px solid #5d531b; background: #171b0d; box-shadow: 1.2rem 1.2rem 0 rgba(0,0,0,0.35); }
 .color-dialog:has(.starting-hand-preview) { width: min(100%, 52rem); }
 .color-dialog h3, .challenge-dialog h3 { margin: 0; font-size: clamp(1.7rem, 5vw, 2.5rem); letter-spacing: -0.04em; }
+.target-dialog h3 { margin: 0; font-size: clamp(1.7rem, 5vw, 2.5rem); letter-spacing: -0.04em; }
 .color-dialog p:not(.eyebrow), .challenge-dialog p:not(.eyebrow), .result-panel > p:not(.eyebrow) { color: #91a59a; line-height: 1.6; }
+.target-dialog p:not(.eyebrow) { color: #b9b58f; line-height: 1.6; }
+.target-options { display: grid; gap: 0.6rem; margin: 1.5rem 0; }
+.target-options .button { align-items: flex-start; flex-direction: column; gap: 0.2rem; }
+.target-options small { color: #8f9b66; font-size: 0.68rem; }
 .color-options { display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem; margin: 1.5rem 0; }
 .color-choice { position: relative; height: 5rem; overflow: hidden; border: 2px solid rgba(255,255,255,0.3); color: #fff; }
 .color-choice::after { position: absolute; inset: 0; background: linear-gradient(120deg, rgba(255,255,255,0.22), transparent 50%); content: ""; }
@@ -787,7 +819,7 @@ input:focus { border-color: #facc15; box-shadow: 0 0 0 1px #facc15; }
   .game-controls .button, .uno-action, .catch-action { min-height: 2.9rem; padding: 0.6rem 0.75rem; font-size: 0.72rem; }
   .bot-control-action { min-height: 2.9rem; padding: 0.55rem 0.65rem; font-size: 0.68rem; }
   .play-action { min-width: 0; }
-  .color-dialog, .challenge-dialog, .result-panel, .pause-panel { box-shadow: none; }
+  .color-dialog, .challenge-dialog, .target-dialog, .result-panel, .pause-panel { box-shadow: none; }
   .challenge-actions, .result-actions { flex-direction: column; }
   .challenge-actions .button, .result-actions .button { width: 100%; }
   .rules-trigger { right: 0.65rem; bottom: 0.65rem; padding: 0.5rem; }

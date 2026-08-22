@@ -3,12 +3,12 @@ import { MAX_GAME_PLAYERS, MIN_GAME_PLAYERS } from "@uno/shared";
 import { previewGameSound, type GameSound } from "./sound-effects";
 
 const CARD_RULES = [
-  { color: "red", kind: "number", symbol: "7", name: "數字牌", description: "可接在相同顏色或相同數字的牌上，沒有額外效果。" },
+  { color: "red", kind: "number", symbol: "7", name: "數字牌", description: "經典模式沒有額外效果；台灣模式出 7 可和指定玩家交換手牌，出 0 則全員依方向傳牌。" },
   { color: "yellow", kind: "skip", symbol: "⊘", name: "跳過", description: "下一位玩家跳過一個回合。" },
   { color: "green", kind: "reverse", symbol: "↻", name: "反轉", description: "改變出牌方向；兩人遊戲中等同跳過，出牌者再進行一回合。" },
-  { color: "blue", kind: "draw-two", symbol: "+2", name: "抽二", description: "下一位玩家抽兩張牌並跳過回合，不可疊加抽牌。" },
+  { color: "blue", kind: "draw-two", symbol: "+2", name: "抽二", description: "經典模式由下一位玩家抽兩張牌並跳過；台灣模式的疊牌方式與同回合多張連出由大廳細項設定決定。" },
   { color: "wild", kind: "wild", symbol: "", name: "萬用牌", description: "任何時候都能打出，並由出牌者指定接下來的顏色。" },
-  { color: "wild", kind: "draw-four", symbol: "+4", name: "萬用抽四", description: "只有手上沒有目前顏色的牌時才能合法打出；指定顏色後，由下一位玩家決定接受或質疑。" },
+  { color: "wild", kind: "draw-four", symbol: "+4", name: "萬用抽四", description: "只有手上沒有目前顏色的牌時才能合法打出；指定顏色後，由下一位玩家接受、質疑，或依大廳細項設定疊牌。" },
 ] as const;
 
 const SOUND_PREVIEWS: Array<{ sound: GameSound; label: string }> = [
@@ -103,8 +103,9 @@ export function RulesGuide() {
                   <ul>
                     <li>每局支援 {MIN_GAME_PLAYERS}–{MAX_GAME_PLAYERS} 位玩家，每人起手七張牌。</li>
                     <li>輪到你時，可打出與棄牌堆頂端相同顏色、數字或符號的牌；萬用牌不受此限制。</li>
-                     <li>你可以抽一張牌。若新牌合法，可立即打出；若不合法，也要手動選擇保留並結束回合。即使新牌合法，也可以保留並結束回合。</li>
+                      <li>經典模式抽一張牌；台灣模式會持續抽牌直到抽到可出的牌。抽到的牌都可選擇保留，並手動結束回合。</li>
                     <li>第一位出完所有手牌的玩家獲勝，採單回合決勝。</li>
+                    <li>台灣模式可在大廳開關 +4 質疑與同回合多張連出；細項說明以房間設定為準。</li>
                     <li>抽牌堆耗盡時，保留目前棄牌，將其餘棄牌洗回抽牌堆。</li>
                   </ul>
                 </div>
@@ -146,7 +147,7 @@ export function RulesGuide() {
                   <article className="challenge-explainer">
                     <p className="eyebrow">DRAW FOUR CHALLENGE</p>
                     <h4>抽四質疑是什麼意思？</h4>
-                    <p>例如目前顏色是<strong>紅色</strong>，玩家 A 打出萬用抽四，下一位玩家 B 可以懷疑 A 原本其實還有紅牌。</p>
+                    <p>若大廳開啟 +4 質疑，例如目前顏色是<strong>紅色</strong>，玩家 A 打出萬用抽四，下一位玩家 B 可以懷疑 A 原本其實還有紅牌。關閉時只能直接接受。</p>
                     <div className="challenge-rule-note">
                       <strong>判定只看目前顏色</strong>
                       <span>A 有任何紅牌，抽四就是違規；A 沒有紅牌，抽四就是合法。即使 A 有相同數字或符號但顏色不同的牌，仍可合法打出抽四。</span>
@@ -183,10 +184,16 @@ export function RulesGuide() {
                       <h4>機器人代管</h4>
                        <p>玩家可在牌局中手動開啟代管；玩家斷線、離開房間或出牌逾時時也會自動啟用。房主可在等候室設定每回合時間，預設為 30 秒。只要房內還有真人連線，機器人就會沿用該玩家的座位與手牌，自動出牌、抽牌、選色及處理抽四；最後一位真人離開或失聯時，房間會立即清理。</p>
                     </article>
-                    <div className="rules-empty">
-                      <strong>其他額外玩法尚未啟用</strong>
-                      <p>目前不支援抽牌疊加、7-0、Jump-in、一次打出多張同牌等自訂規則。日後新增的玩法與啟用條件會列在這裡。</p>
-                    </div>
+                      <article className="rules-extra-item">
+                        <span>大廳切換</span>
+                        <h4>經典官方規則</h4>
+                       <p>每回合出一張牌，抽牌只抽一張；台灣細項在經典模式不生效。</p>
+                      </article>
+                      <article className="rules-extra-item rules-extra-item-taiwan">
+                        <span>大廳切換</span>
+                        <h4>台灣常見玩法</h4>
+                        <p>大廳可分別開關疊牌、7-0、Jump-in、抽到能出的牌為止、+4 質疑與同回合多張連出。疊牌有三種：同類型（+2 接 +2、+4 接 +4）、大壓小（+4 可接 +2，但 +2 不可接 +4），以及混合疊牌（+2、+4 互相都能接）。多張連出限相同數字或相同功能的非萬用牌，第一張須合法。</p>
+                      </article>
                   </div>
                 </div>
               </section>

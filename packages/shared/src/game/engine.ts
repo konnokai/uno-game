@@ -2,15 +2,25 @@ import { createDeck, shuffleDeck } from "./deck.js";
 import type {
   Card,
   CardColor,
+  CardValue,
+  GameRuleOptions,
+  GameRulesMode,
   GamePlayer,
   GameState,
+  PendingDrawType,
   PlayCardOptions,
   RandomSource,
   RuleErrorCode,
   RuleResult,
   StartGameOptions,
 } from "./types.js";
-import { CARD_COLORS, MAX_GAME_PLAYERS, MIN_GAME_PLAYERS } from "./types.js";
+import {
+  CARD_COLORS,
+  DEFAULT_GAME_RULES_MODE,
+  DEFAULT_GAME_RULE_OPTIONS,
+  MAX_GAME_PLAYERS,
+  MIN_GAME_PLAYERS,
+} from "./types.js";
 
 function rejected(
   state: GameState,
@@ -34,6 +44,7 @@ function cloneState(state: GameState): GameState {
     })),
     drawPile: [...state.drawPile],
     discardPile: [...state.discardPile],
+    rulesOptions: { ...state.rulesOptions },
     pendingDrawFour: state.pendingDrawFour
       ? { ...state.pendingDrawFour }
       : null,
@@ -148,11 +159,120 @@ function drawCards(
   return { cards: drawn, reshuffled };
 }
 
+/** Draws through the remaining pile until the first card the player can legally use. */
+function drawUntilPlayable(
+  state: GameState,
+  targetIndex: number,
+  random: RandomSource,
+): DrawCardsResult {
+  const drawn: Card[] = [];
+  let reshuffled = false;
+  const target = state.players[targetIndex];
+  const discard = topDiscard(state);
+
+  if (!target || state.currentColor === null) {
+    throw new RangeError("Cannot draw until playable without a target and color");
+  }
+
+  while (true) {
+    reshuffled = refillDrawPile(state, random) || reshuffled;
+    const card = state.drawPile.pop();
+    if (!card) break;
+    target.hand.push(card);
+    drawn.push(card);
+    if (canPlayFromHand(card, target.hand, discard, state.currentColor)) break;
+  }
+
+  return { cards: drawn, reshuffled };
+}
+
 function completeTurn(state: GameState, fromIndex: number, steps = 1): void {
   state.unoVulnerablePlayerId = null;
   state.hasDrawnThisTurn = false;
   state.drawnCardId = null;
   state.currentPlayerIndex = nextPlayerIndex(state, fromIndex, steps);
+}
+
+function isTaiwanRules(state: Pick<GameState, "rulesMode">): boolean {
+  return state.rulesMode === "taiwan";
+}
+
+function isTaiwanRuleEnabled(
+  state: Pick<GameState, "rulesMode" | "rulesOptions">,
+  option: "sevenZeroEnabled" | "jumpInEnabled" | "drawToMatchEnabled",
+): boolean {
+  return isTaiwanRules(state) && state.rulesOptions[option];
+}
+
+/**
+ * Resolves whether the next penalty card is allowed by the selected Taiwan
+ * stacking relation: same type, +4 over +2, or mixed.
+ */
+export function isDrawCardStackable(
+  pendingType: PendingDrawType | null,
+  nextValue: CardValue,
+  rulesOptions: Pick<GameRuleOptions, "stackingEnabled" | "stackingMode">,
+): boolean {
+  if (!rulesOptions.stackingEnabled || pendingType === null) return false;
+  const nextType = nextValue === "draw-two" || nextValue === "wild-draw-four"
+    ? nextValue
+    : null;
+  if (nextType === null) return false;
+  if (rulesOptions.stackingMode === "mixed") return true;
+  if (rulesOptions.stackingMode === "draw-four-over-two") {
+    return pendingType === "draw-two" || nextType === "wild-draw-four";
+  }
+  return pendingType === nextType;
+}
+
+function canStackPendingDraw(state: GameState, nextValue: CardValue): boolean {
+  return isTaiwanRules(state) && isDrawCardStackable(
+    state.pendingDrawType,
+    nextValue,
+    state.rulesOptions,
+  );
+}
+
+function isMultiCardValue(value: CardValue): boolean {
+  return typeof value === "number" ||
+    value === "skip" ||
+    value === "reverse" ||
+    value === "draw-two";
+}
+
+function isJumpInMatch(card: Card, discard: Card): boolean {
+  return card.color === discard.color && card.value === discard.value;
+}
+
+function canPlayFromHand(
+  card: Card,
+  hand: readonly Card[],
+  discard: Card,
+  currentColor: CardColor,
+): boolean {
+  return isCardPlayable(card, discard, currentColor) &&
+    (card.value !== "wild-draw-four" || isWildDrawFourLegal(hand, currentColor, card.id));
+}
+
+function clearPendingDraw(state: GameState): void {
+  state.pendingDrawAmount = 0;
+  state.pendingDrawType = null;
+}
+
+/** Updates UNO after card effects, including Taiwan hand exchanges and passes. */
+function updateUnoStatus(
+  state: GameState,
+  player: GamePlayer,
+  playerId: string,
+  declareUno: boolean,
+): void {
+  state.unoVulnerablePlayerId = null;
+  if (player.hand.length !== 1) return;
+  if (declareUno) {
+    state.lastAction.declaredUno = true;
+  } else {
+    state.unoVulnerablePlayerId = playerId;
+  }
 }
 
 function validatePlayingTurn(state: GameState, playerId: string): RuleResult | null {
@@ -209,6 +329,11 @@ export function startGame(
 
   const random = options.random ?? Math.random;
   const handSize = options.handSize ?? 7;
+  const rulesMode: GameRulesMode = options.rulesMode ?? DEFAULT_GAME_RULES_MODE;
+  const rulesOptions: GameRuleOptions = {
+    ...DEFAULT_GAME_RULE_OPTIONS,
+    ...(options.rulesOptions ?? {}),
+  };
   const drawPile = options.deck
     ? options.deck.map((card) => ({ ...card }))
     : shuffleDeck(createDeck(), random);
@@ -260,6 +385,8 @@ export function startGame(
   }
 
   const state: GameState = {
+    rulesMode,
+    rulesOptions,
     players,
     drawPile,
     discardPile: [initialCard],
@@ -269,6 +396,8 @@ export function startGame(
     phase: "playing",
     hasDrawnThisTurn: false,
     drawnCardId: null,
+    pendingDrawAmount: 0,
+    pendingDrawType: null,
     unoVulnerablePlayerId: null,
     pendingDrawFour: null,
     winnerId: null,
@@ -323,33 +452,259 @@ export function chooseStartingColor(
   return accepted(next);
 }
 
+/** Applies a permitted Taiwan draw-card stack before the accumulated penalty is resolved. */
+function playStackedDrawCard(
+  state: GameState,
+  playerId: string,
+  cardId: string,
+  options: PlayCardOptions,
+): RuleResult {
+  const actingPlayerIndex = playerIndex(state, playerId);
+  const player = state.players[actingPlayerIndex];
+  const cardIndex = player?.hand.findIndex((card) => card.id === cardId) ?? -1;
+  const card = cardIndex >= 0 ? player?.hand[cardIndex] : undefined;
+  if (!player || cardIndex < 0 || !card) {
+    return rejected(state, "CARD_NOT_IN_HAND", "The player does not own this card");
+  }
+  if (!canStackPendingDraw(state, card.value)) {
+    return rejected(state, "CARD_NOT_PLAYABLE", "這張抽牌不能疊在目前的抽牌懲罰上");
+  }
+  if (options.targetPlayerId !== undefined) {
+    return rejected(state, "INVALID_TARGET_PLAYER", "Only a 7 can choose an exchange target");
+  }
+  const isDrawFour = card.value === "wild-draw-four";
+  if (isDrawFour && options.chosenColor === undefined) {
+    return rejected(state, "COLOR_REQUIRED", "A color is required for a wild card");
+  }
+  if (!isDrawFour && options.chosenColor !== undefined) {
+    return rejected(state, "COLOR_NOT_ALLOWED", "A color can only be chosen for a wild card");
+  }
+  if (options.chosenColor !== undefined && !isCardColor(options.chosenColor)) {
+    return rejected(state, "INVALID_COLOR", "The chosen color is invalid");
+  }
+
+  const next = cloneState(state);
+  const nextPlayer = next.players[actingPlayerIndex];
+  const [playedCard] = nextPlayer!.hand.splice(cardIndex, 1);
+  if (!playedCard) throw new RangeError("Card disappeared while stacking a draw card");
+
+  const wasLegal = isDrawFour && isWildDrawFourLegal(player.hand, state.currentColor!, cardId);
+  next.discardPile.push(playedCard);
+  next.currentColor = options.chosenColor ?? playedCard.color;
+  next.currentPlayerIndex = nextPlayerIndex(next, actingPlayerIndex);
+  next.hasDrawnThisTurn = false;
+  next.drawnCardId = null;
+  next.unoVulnerablePlayerId =
+    nextPlayer!.hand.length === 1 && !options.declareUno ? playerId : null;
+  next.pendingDrawAmount += isDrawFour ? 4 : 2;
+  next.pendingDrawType = isDrawFour ? "wild-draw-four" : "draw-two";
+  const target = next.players[next.currentPlayerIndex];
+  if (!target) throw new RangeError("Stacked draw card has no target");
+  next.phase = isDrawFour ? "awaiting-draw-four-challenge" : "playing";
+  next.pendingDrawFour = isDrawFour
+    ? {
+        attackerId: playerId,
+        targetId: target.id,
+        wasLegal,
+        pendingWinnerId: nextPlayer!.hand.length === 0 ? playerId : null,
+      }
+    : null;
+  next.lastAction = {
+    type: "play-card",
+    playerId,
+    cardId,
+    ...(options.chosenColor ? { chosenColor: options.chosenColor } : {}),
+    amount: next.pendingDrawAmount,
+    ...(options.declareUno && nextPlayer!.hand.length === 1 ? { declaredUno: true } : {}),
+  };
+  if (!isDrawFour && nextPlayer!.hand.length === 0) {
+    next.phase = "finished";
+    next.winnerId = playerId;
+    clearPendingDraw(next);
+  } else if (nextPlayer!.hand.length === 1 && !options.declareUno) {
+    next.unoVulnerablePlayerId = playerId;
+  }
+  return accepted(next);
+}
+
+/** Plays same-value non-wild cards as one atomic Taiwan-mode action. */
+function playMultipleCards(
+  state: GameState,
+  playerId: string,
+  firstCardId: string,
+  additionalCardIds: readonly string[],
+  options: PlayCardOptions,
+): RuleResult {
+  if (state.rulesMode !== "taiwan" || !state.rulesOptions.multiCardPlayEnabled) {
+    return rejected(state, "CARD_NOT_PLAYABLE", "目前規則未開啟同回合多張連出");
+  }
+  if (state.phase !== "playing") {
+    return rejected(state, "GAME_NOT_PLAYING", "The game is not accepting turn actions");
+  }
+  const actingPlayerIndex = playerIndex(state, playerId);
+  if (state.currentPlayerIndex !== actingPlayerIndex) {
+    return rejected(state, "NOT_YOUR_TURN", "It is not this player's turn");
+  }
+  if (state.hasDrawnThisTurn) {
+    return rejected(state, "MUST_PLAY_DRAWN_CARD", "抽牌後不能一次連出多張牌");
+  }
+
+  const cardIds = [firstCardId, ...additionalCardIds];
+  if (new Set(cardIds).size !== cardIds.length || cardIds.length < 2) {
+    return rejected(state, "CARD_NOT_PLAYABLE", "多張連出的牌不能重複");
+  }
+  const player = state.players[actingPlayerIndex];
+  if (!player) return rejected(state, "PLAYER_NOT_IN_GAME", "The player is not in this game");
+
+  const playedCards = cardIds.map((id) => player.hand.find((card) => card.id === id));
+  if (playedCards.some((card) => !card)) {
+    return rejected(state, "CARD_NOT_IN_HAND", "The player does not own this card");
+  }
+  const cards = playedCards as Card[];
+  const firstCard = cards[0]!;
+  if (!isMultiCardValue(firstCard.value) || cards.some((card) => card.value !== firstCard.value)) {
+    return rejected(state, "CARD_NOT_PLAYABLE", "多張連出必須是相同數字或相同功能牌，且不能包含萬用牌");
+  }
+
+  const firstIsPlayable = state.pendingDrawAmount > 0
+    ? canStackPendingDraw(state, firstCard.value)
+    : isCardPlayable(firstCard, topDiscard(state), state.currentColor!);
+  if (!firstIsPlayable) {
+    return rejected(state, "CARD_NOT_PLAYABLE", "第一張牌不能接在目前牌面上");
+  }
+  if (options.chosenColor !== undefined) {
+    return rejected(state, "COLOR_NOT_ALLOWED", "多張連出不能包含選色");
+  }
+  if (firstCard.value === 7 && isTaiwanRuleEnabled(state, "sevenZeroEnabled")) {
+    if (!options.targetPlayerId) {
+      return rejected(state, "TARGET_PLAYER_REQUIRED", "Choose a player to exchange hands with");
+    }
+    const targetIndex = playerIndex(state, options.targetPlayerId);
+    if (targetIndex < 0 || targetIndex === actingPlayerIndex) {
+      return rejected(state, "INVALID_TARGET_PLAYER", "Choose another player in this game");
+    }
+  } else if (options.targetPlayerId !== undefined) {
+    return rejected(state, "INVALID_TARGET_PLAYER", "Only a 7 can choose an exchange target");
+  }
+
+  const next = cloneState(state);
+  const nextPlayer = next.players[actingPlayerIndex]!;
+  const playedIdSet = new Set(cardIds);
+  nextPlayer.hand = nextPlayer.hand.filter((card) => !playedIdSet.has(card.id));
+  next.discardPile.push(...cards.map((card) => ({ ...card })));
+  next.currentColor = cards.at(-1)!.color;
+  next.hasDrawnThisTurn = false;
+  next.drawnCardId = null;
+  next.lastAction = {
+    type: "play-card",
+    playerId,
+    cardId: firstCardId,
+    cardIds: [...cardIds],
+    ...(options.targetPlayerId ? { targetPlayerId: options.targetPlayerId } : {}),
+  };
+
+  if (firstCard.value === 7 && isTaiwanRuleEnabled(next, "sevenZeroEnabled")) {
+    const target = next.players[playerIndex(next, options.targetPlayerId!)];
+    if (!target) throw new RangeError("Seven has no exchange target");
+    [nextPlayer.hand, target.hand] = [target.hand, nextPlayer.hand];
+  } else if (firstCard.value === 0 && isTaiwanRuleEnabled(next, "sevenZeroEnabled")) {
+    const hands = next.players.map((candidate) => candidate.hand);
+    next.players.forEach((candidate, index) => {
+      candidate.hand = hands[nextPlayerIndex(next, index, -1)]!;
+    });
+  }
+
+  const fromIndex = actingPlayerIndex;
+  if (firstCard.value === "draw-two") {
+    next.pendingDrawAmount += 2 * cards.length;
+    next.pendingDrawType = "draw-two";
+    next.lastAction.amount = next.pendingDrawAmount;
+    completeTurn(next, fromIndex);
+  } else if (firstCard.value === "skip") {
+    completeTurn(next, fromIndex, 2);
+  } else if (firstCard.value === "reverse") {
+    next.direction = next.direction === 1 ? -1 : 1;
+    completeTurn(next, fromIndex, next.players.length === 2 ? 2 : 1);
+  } else {
+    completeTurn(next, fromIndex);
+  }
+
+  updateUnoStatus(next, nextPlayer, playerId, options.declareUno === true);
+  if (nextPlayer.hand.length === 0) {
+    next.phase = "finished";
+    next.winnerId = playerId;
+    clearPendingDraw(next);
+  }
+  return accepted(next);
+}
+
 export function playCard(
   state: GameState,
   playerId: string,
   cardId: string,
   options: PlayCardOptions = {},
 ): RuleResult {
+  if (options.additionalCardIds && options.additionalCardIds.length > 0) {
+    return playMultipleCards(state, playerId, cardId, options.additionalCardIds, options);
+  }
+  if (
+    state.rulesMode === "taiwan" &&
+    state.phase === "awaiting-draw-four-challenge" &&
+    state.pendingDrawFour?.targetId === playerId
+  ) {
+    return playStackedDrawCard(state, playerId, cardId, options);
+  }
+
+  const actingPlayerIndex = playerIndex(state, playerId);
+  const player = state.players[actingPlayerIndex];
+  const cardIndex = player?.hand.findIndex((card) => card.id === cardId) ?? -1;
+  const card = cardIndex >= 0 ? player?.hand[cardIndex] : undefined;
+  const isCurrentTurn = actingPlayerIndex === state.currentPlayerIndex;
+  const isJumpIn = Boolean(
+    !isCurrentTurn &&
+    player &&
+    card &&
+    isTaiwanRuleEnabled(state, "jumpInEnabled") &&
+    state.phase === "playing" &&
+    state.currentColor !== null &&
+    state.pendingDrawAmount === 0 &&
+    isJumpInMatch(card, topDiscard(state)),
+  );
   const turnError = validatePlayingTurn(state, playerId);
-  if (turnError) {
+  if (turnError && !isJumpIn) {
     return turnError;
   }
 
-  const player = currentPlayer(state);
-  const cardIndex = player.hand.findIndex((card) => card.id === cardId);
-  if (cardIndex < 0) {
+  if (!player || cardIndex < 0 || !card) {
     return rejected(state, "CARD_NOT_IN_HAND", "The player does not own this card");
   }
-  if (state.hasDrawnThisTurn && state.drawnCardId !== cardId) {
+  if (isCurrentTurn && state.hasDrawnThisTurn && state.drawnCardId !== cardId) {
     return rejected(
       state,
       "MUST_PLAY_DRAWN_CARD",
       "Only the card drawn this turn may be played",
     );
   }
-
-  const card = player.hand[cardIndex];
-  if (!card || !isCardPlayable(card, topDiscard(state), state.currentColor!)) {
+  if (state.pendingDrawAmount > 0 && !canStackPendingDraw(state, card.value)) {
+    return rejected(state, "CARD_NOT_PLAYABLE", "這張抽牌不能疊在目前的抽牌懲罰上");
+  }
+  if (!isJumpIn && !isCardPlayable(card, topDiscard(state), state.currentColor!)) {
     return rejected(state, "CARD_NOT_PLAYABLE", "The card cannot be played here");
+  }
+  if (isJumpIn && !isJumpInMatch(card, topDiscard(state))) {
+    return rejected(state, "CARD_NOT_PLAYABLE", "Only an identical card can be used to jump in");
+  }
+
+  if (card.value === 7 && isTaiwanRuleEnabled(state, "sevenZeroEnabled")) {
+    if (!options.targetPlayerId) {
+      return rejected(state, "TARGET_PLAYER_REQUIRED", "Choose a player to exchange hands with");
+    }
+    const targetIndex = playerIndex(state, options.targetPlayerId);
+    if (targetIndex < 0 || targetIndex === actingPlayerIndex) {
+      return rejected(state, "INVALID_TARGET_PLAYER", "Choose another player in this game");
+    }
+  } else if (options.targetPlayerId !== undefined) {
+    return rejected(state, "INVALID_TARGET_PLAYER", "Only a 7 can choose an exchange target");
   }
 
   const isWild = card.value === "wild" || card.value === "wild-draw-four";
@@ -368,7 +723,9 @@ export function playCard(
   }
 
   const next = cloneState(state);
-  const nextPlayer = currentPlayer(next);
+  if (isJumpIn) next.currentPlayerIndex = actingPlayerIndex;
+  const nextPlayer = next.players[actingPlayerIndex];
+  if (!nextPlayer) throw new RangeError("Player disappeared while applying a play");
   const [playedCard] = nextPlayer.hand.splice(cardIndex, 1);
   if (!playedCard) {
     throw new RangeError("Card disappeared while applying a play");
@@ -384,20 +741,29 @@ export function playCard(
   next.currentColor = options.chosenColor ?? playedCard.color;
   next.hasDrawnThisTurn = false;
   next.drawnCardId = null;
-  next.unoVulnerablePlayerId =
-    nextPlayer.hand.length === 1 && !options.declareUno ? playerId : null;
   next.lastAction = {
     type: "play-card",
     playerId,
     cardId,
     ...(options.chosenColor ? { chosenColor: options.chosenColor } : {}),
-    ...(options.declareUno && nextPlayer.hand.length === 1
-      ? { declaredUno: true }
-      : {}),
+    ...(options.targetPlayerId ? { targetPlayerId: options.targetPlayerId } : {}),
+    ...(isJumpIn ? { jumpIn: true } : {}),
   };
 
   const random = options.random ?? Math.random;
-  const fromIndex = next.currentPlayerIndex;
+  const fromIndex = actingPlayerIndex;
+
+  if (playedCard.value === 7 && isTaiwanRuleEnabled(next, "sevenZeroEnabled")) {
+    const targetIndex = playerIndex(next, options.targetPlayerId!);
+    const target = next.players[targetIndex];
+    if (!target) throw new RangeError("Seven has no exchange target");
+    [nextPlayer.hand, target.hand] = [target.hand, nextPlayer.hand];
+  } else if (playedCard.value === 0 && isTaiwanRuleEnabled(next, "sevenZeroEnabled")) {
+    const hands = next.players.map((player) => player.hand);
+    next.players.forEach((player, index) => {
+      player.hand = hands[nextPlayerIndex(next, index, -1)]!;
+    });
+  }
 
   if (playedCard.value === "wild-draw-four") {
     const targetIndex = nextPlayerIndex(next, fromIndex);
@@ -407,12 +773,16 @@ export function playCard(
     }
     next.phase = "awaiting-draw-four-challenge";
     next.currentPlayerIndex = targetIndex;
+    next.pendingDrawAmount += 4;
+    next.pendingDrawType = "wild-draw-four";
+    next.lastAction.amount = next.pendingDrawAmount;
     next.pendingDrawFour = {
       attackerId: playerId,
       targetId: target.id,
       wasLegal: wildDrawFourWasLegal,
       pendingWinnerId: nextPlayer.hand.length === 0 ? playerId : null,
     };
+    updateUnoStatus(next, nextPlayer, playerId, options.declareUno === true);
     return accepted(next);
   }
 
@@ -423,19 +793,26 @@ export function playCard(
     completeTurn(next, fromIndex, next.players.length === 2 ? 2 : 1);
   } else if (playedCard.value === "draw-two") {
     const targetIndex = nextPlayerIndex(next, fromIndex);
-    const drawn = drawCards(next, targetIndex, 2, random);
-    next.lastAction.amount = drawn.cards.length;
-    if (drawn.reshuffled) next.lastAction.shuffle = "recycle";
-    completeTurn(next, fromIndex, 2);
+    if (isTaiwanRules(next)) {
+      next.pendingDrawAmount += 2;
+      next.pendingDrawType = "draw-two";
+      next.lastAction.amount = next.pendingDrawAmount;
+      completeTurn(next, fromIndex);
+    } else {
+      const drawn = drawCards(next, targetIndex, 2, random);
+      next.lastAction.amount = drawn.cards.length;
+      if (drawn.reshuffled) next.lastAction.shuffle = "recycle";
+      completeTurn(next, fromIndex, 2);
+    }
   } else {
     completeTurn(next, fromIndex);
   }
 
+  updateUnoStatus(next, nextPlayer, playerId, options.declareUno === true);
   if (nextPlayer.hand.length === 0) {
     next.phase = "finished";
     next.winnerId = playerId;
-  } else if (nextPlayer.hand.length === 1 && !options.declareUno) {
-    next.unoVulnerablePlayerId = playerId;
+    clearPendingDraw(next);
   }
 
   return accepted(next);
@@ -455,20 +832,29 @@ export function drawCard(
   }
 
   const next = cloneState(state);
-  const drawResult = drawCards(next, next.currentPlayerIndex, 1, random);
-  const drawn = drawResult.cards[0];
+  const drawResult = next.pendingDrawAmount > 0
+    ? drawCards(next, next.currentPlayerIndex, next.pendingDrawAmount, random)
+    : isTaiwanRuleEnabled(next, "drawToMatchEnabled")
+      ? drawUntilPlayable(next, next.currentPlayerIndex, random)
+      : drawCards(next, next.currentPlayerIndex, 1, random);
+  const drawn = isTaiwanRules(next) ? drawResult.cards.at(-1) : drawResult.cards[0];
   next.lastAction = {
     type: "draw-card",
     playerId,
-    amount: drawn ? 1 : 0,
+    amount: drawResult.cards.length,
     ...(drawResult.reshuffled ? { shuffle: "recycle" as const } : {}),
   };
 
-  // Keep the turn after every draw so opponents cannot infer whether the
-  // player had a matching card from an automatic pass.
-  next.hasDrawnThisTurn = true;
-  next.drawnCardId = drawn?.id ?? null;
-  next.unoVulnerablePlayerId = null;
+  if (next.pendingDrawAmount > 0) {
+    clearPendingDraw(next);
+    completeTurn(next, next.currentPlayerIndex);
+  } else {
+    // Keep the turn after every draw so opponents can choose whether to play
+    // the newly drawn card or pass, including in draw-to-match mode.
+    next.hasDrawnThisTurn = true;
+    next.drawnCardId = drawn?.id ?? null;
+    next.unoVulnerablePlayerId = null;
+  }
 
   return accepted(next);
 }
@@ -569,6 +955,9 @@ export function resolveDrawFour(
       "Only the targeted player can resolve the draw four",
     );
   }
+  if (challenge && !state.rulesOptions.drawFourChallengeEnabled) {
+    return rejected(state, "DRAW_FOUR_CHALLENGE_DISABLED", "目前規則未開啟 +4 質疑");
+  }
 
   const next = cloneState(state);
   const pending = next.pendingDrawFour!;
@@ -581,19 +970,20 @@ export function resolveDrawFour(
   let amount = 0;
   let successful: boolean | undefined;
   let reshuffled = false;
+  const penalty = next.pendingDrawAmount || 4;
   if (!challenge) {
-    const drawResult = drawCards(next, targetIndex, 4, random);
+    const drawResult = drawCards(next, targetIndex, penalty, random);
     amount = drawResult.cards.length;
     reshuffled = drawResult.reshuffled;
     next.currentPlayerIndex = nextPlayerIndex(next, targetIndex);
   } else if (pending.wasLegal) {
-    const drawResult = drawCards(next, targetIndex, 6, random);
+    const drawResult = drawCards(next, targetIndex, penalty + 2, random);
     amount = drawResult.cards.length;
     reshuffled = drawResult.reshuffled;
     next.currentPlayerIndex = nextPlayerIndex(next, targetIndex);
     successful = false;
   } else {
-    const drawResult = drawCards(next, attackerIndex, 4, random);
+    const drawResult = drawCards(next, attackerIndex, penalty, random);
     amount = drawResult.cards.length;
     reshuffled = drawResult.reshuffled;
     next.currentPlayerIndex = targetIndex;
@@ -602,6 +992,7 @@ export function resolveDrawFour(
 
   next.phase = "playing";
   next.pendingDrawFour = null;
+  clearPendingDraw(next);
   next.hasDrawnThisTurn = false;
   next.drawnCardId = null;
   next.unoVulnerablePlayerId = null;

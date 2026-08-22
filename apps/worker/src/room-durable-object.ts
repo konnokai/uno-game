@@ -395,6 +395,11 @@ export class RoomDurableObject extends DurableObject<Env> {
       case "room:add-bot": return this.service.addBot(playerId);
       case "room:remove-bot": return this.service.removeBot(playerId, message.payload.botId);
       case "room:set-turn-timeout": return this.service.setTurnTimeout(playerId, message.payload.seconds);
+      case "room:set-rules-mode": return this.service.setRulesMode(
+        playerId,
+        message.payload.rulesMode,
+        message.payload.rulesOptions,
+      );
       case "game:start": return this.service.start(playerId);
       case "game:rematch": return this.service.rematch(playerId);
       case "game:bot-control": return this.service.setBotControl(playerId, message.payload.enabled);

@@ -74,4 +74,61 @@ describe("WebSocket protocol validation", () => {
       payload: { requestId: "timeout-02", seconds: 0 },
     })).ok).toBe(false);
   });
+
+  it("validates the room rules mode payload", () => {
+    expect(parseClientMessage(JSON.stringify({
+      type: "room:set-rules-mode",
+      requestId: "rules-001",
+      payload: { requestId: "rules-001", rulesMode: "taiwan" },
+    })).ok).toBe(true);
+    expect(parseClientMessage(JSON.stringify({
+      type: "room:set-rules-mode",
+      requestId: "rules-002",
+      payload: { requestId: "rules-002", rulesMode: "house" },
+    })).ok).toBe(false);
+    expect(parseClientMessage(JSON.stringify({
+      type: "room:set-rules-mode",
+      requestId: "rules-003",
+      payload: {
+        requestId: "rules-003",
+        rulesMode: "taiwan",
+        rulesOptions: {
+          stackingEnabled: true,
+          stackingMode: "mixed",
+          sevenZeroEnabled: true,
+          jumpInEnabled: false,
+          drawToMatchEnabled: true,
+          drawFourChallengeEnabled: true,
+          multiCardPlayEnabled: true,
+        },
+      },
+    })).ok).toBe(true);
+    expect(parseClientMessage(JSON.stringify({
+      type: "room:set-rules-mode",
+      requestId: "rules-004",
+      payload: {
+        requestId: "rules-004",
+        rulesMode: "taiwan",
+        rulesOptions: { stackingEnabled: true, stackingMode: "invalid" },
+      },
+    })).ok).toBe(false);
+    expect(parseClientMessage(JSON.stringify({
+      type: "game:play-card",
+      requestId: "play-card-01",
+      payload: {
+        requestId: "play-card-01",
+        cardId: "red-5-1",
+        additionalCardIds: ["blue-5-1"],
+      },
+    })).ok).toBe(true);
+    expect(parseClientMessage(JSON.stringify({
+      type: "game:play-card",
+      requestId: "play-card-02",
+      payload: {
+        requestId: "play-card-02",
+        cardId: "red-5-1",
+        additionalCardIds: [""],
+      },
+    })).ok).toBe(false);
+  });
 });

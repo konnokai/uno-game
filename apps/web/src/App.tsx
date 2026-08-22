@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type {
   GameSnapshot,
+  GameRuleOptions,
+  GameRulesMode,
+  StackingMode,
   RoomActionResponse,
   RoomListItem,
   RoomSession,
@@ -9,6 +12,7 @@ import type {
   SessionAttachResponse,
 } from "@uno/shared";
 import {
+  DEFAULT_GAME_RULE_OPTIONS,
   DEFAULT_TURN_TIMEOUT_SECONDS,
   MAX_NICKNAME_LENGTH,
   MAX_GAME_PLAYERS,
@@ -32,6 +36,44 @@ import { RulesGuide } from "./RulesGuide";
 import { createRoom as createRoomRequest, joinRoom as joinRoomRequest, listRooms, socket } from "./socket";
 
 const SESSION_KEY = "uno-room-session";
+
+const RULES_MODE_LABELS: Record<GameRulesMode, string> = {
+  classic: "經典官方規則",
+  taiwan: "台灣常見玩法",
+};
+
+const STACKING_MODE_LABELS: Record<StackingMode, string> = {
+  "same-type": "+2 只能疊 +2，+4 只能疊 +4",
+  "draw-four-over-two": "+4 可以疊 +2，但 +2 不能疊 +4",
+  mixed: "+2、+4 可以混合疊牌",
+};
+
+const STACKING_MODE_ORDER: StackingMode[] = ["same-type", "draw-four-over-two", "mixed"];
+
+const RULE_HINTS = {
+  stacking: "開啟後，遇到累積中的 +2 或 +4，下一位可以依下方疊牌方式再出抽牌，將罰抽張數傳給下一位；關閉後必須直接抽完累積張數。",
+  sevenZero: "出 7 時可指定一位玩家交換全部手牌；出 0 時，所有玩家依目前方向把手牌傳給下一位。",
+  jumpIn: "不在自己回合時，若手上有和棄牌堆頂牌顏色與牌面完全相同的牌，可以立即搶牌，出牌權從搶牌者繼續。",
+  drawToMatch: "輪到自己但沒有可出的牌時，持續從牌庫抽牌，直到抽到可出的牌；抽到後可以打出，也可以保留並結束回合。",
+  drawFourChallenge: "有人打出 +4 後，下家可以檢查對方是否仍持有目前顏色的牌。質疑成功由出牌者抽牌；質疑失敗則由質疑者抽 6 張。關閉後只能接受 +4。",
+  multiCardPlay: "開啟後，一回合可以一次打出兩張以上相同數字或相同功能的非萬用牌。第一張必須合法，後續牌必須與第一張牌面值相同。",
+} as const;
+
+function RuleHint({ id, label, children }: { id: string; label: string; children: ReactNode }) {
+  return (
+    <span className="rule-hint">
+      <button
+        aria-describedby={`${id}-tooltip`}
+        aria-label={`${label}說明`}
+        className="rule-hint-button"
+        type="button"
+      >
+        ?
+      </button>
+      <span className="rule-tooltip" id={`${id}-tooltip`} role="tooltip">{children}</span>
+    </span>
+  );
+}
 
 function requestId(): string {
   return crypto.randomUUID();
@@ -207,6 +249,8 @@ function LobbyPage({ room, session, error, onError, onLeave }: RoomPageProps) {
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [timeoutSeconds, setTimeoutSeconds] = useState(String(DEFAULT_TURN_TIMEOUT_SECONDS));
+  const [rulesMode, setRulesMode] = useState<GameRulesMode>("classic");
+  const [rulesOptions, setRulesOptions] = useState<GameRuleOptions>({ ...DEFAULT_GAME_RULE_OPTIONS });
 
   useEffect(() => {
     if (room?.code === roomCode && room.phase !== "lobby") {
@@ -217,6 +261,20 @@ function LobbyPage({ room, session, error, onError, onLeave }: RoomPageProps) {
   useEffect(() => {
     if (room) setTimeoutSeconds(String(room.turnTimeoutSeconds));
   }, [room?.turnTimeoutSeconds]);
+
+  useEffect(() => {
+    if (room) {
+      setRulesMode(room.rulesMode);
+      setRulesOptions({ ...room.rulesOptions });
+    }
+  }, [
+    room?.rulesMode,
+    room?.rulesOptions.stackingEnabled,
+    room?.rulesOptions.stackingMode,
+    room?.rulesOptions.sevenZeroEnabled,
+    room?.rulesOptions.jumpInEnabled,
+    room?.rulesOptions.drawToMatchEnabled,
+  ]);
 
   if (!session || session.roomCode !== roomCode) {
     return <MissingSession roomCode={roomCode} />;
@@ -266,6 +324,16 @@ function LobbyPage({ room, session, error, onError, onLeave }: RoomPageProps) {
     socket.emit("room:set-turn-timeout", { seconds, requestId: requestId() }, applyAction);
   }
 
+  function saveRulesMode() {
+    setBusy(true);
+    onError("");
+    socket.emit("room:set-rules-mode", { rulesMode, rulesOptions, requestId: requestId() }, applyAction);
+  }
+
+  function updateRulesOption<K extends keyof GameRuleOptions>(key: K, value: GameRuleOptions[K]) {
+    setRulesOptions((current) => ({ ...current, [key]: value }));
+  }
+
   function addBot() {
     setBusy(true);
     onError("");
@@ -293,9 +361,12 @@ function LobbyPage({ room, session, error, onError, onLeave }: RoomPageProps) {
           <span>房號</span>
           <strong>{room.code}</strong>
         </div>
-        <button className="button secondary" onClick={copyInvitation} type="button">
-          {copied ? "已複製邀請連結" : "複製邀請連結"}
-        </button>
+        <div className="room-code-actions">
+          <small>{RULES_MODE_LABELS[room.rulesMode]}</small>
+          <button className="button secondary" onClick={copyInvitation} type="button">
+            {copied ? "已複製邀請連結" : "複製邀請連結"}
+          </button>
+        </div>
       </section>
 
       <section className="lobby-grid">
@@ -356,6 +427,118 @@ function LobbyPage({ room, session, error, onError, onLeave }: RoomPageProps) {
                 </div>
                 <small>預設 {DEFAULT_TURN_TIMEOUT_SECONDS} 秒，逾時會自動轉為機器人代打。</small>
               </form>
+              <div className="rules-mode-setting">
+                <label htmlFor="rules-mode">遊戲規則</label>
+                <select
+                  id="rules-mode"
+                  disabled={busy}
+                  onChange={(event) => setRulesMode(event.target.value as GameRulesMode)}
+                  value={rulesMode}
+                >
+                  <option value="classic">經典官方規則</option>
+                  <option value="taiwan">台灣常見玩法</option>
+                </select>
+                <fieldset className="rules-detail-setting">
+                  <legend>台灣玩法細項</legend>
+                  <div className="rules-toggle-row">
+                    <label className="rules-toggle">
+                      <input
+                        aria-label="允許疊牌"
+                        checked={rulesOptions.stackingEnabled}
+                        disabled={busy || rulesMode === "classic"}
+                        onChange={(event) => updateRulesOption("stackingEnabled", event.target.checked)}
+                        type="checkbox"
+                      />
+                      <span>允許疊牌</span>
+                    </label>
+                    <RuleHint id="stacking" label="允許疊牌">{RULE_HINTS.stacking}</RuleHint>
+                  </div>
+                  <div className="stacking-mode-options">
+                    <span>疊牌方式</span>
+                    {STACKING_MODE_ORDER.map((mode) => (
+                      <label className="rules-radio" key={mode}>
+                        <input
+                          aria-label={STACKING_MODE_LABELS[mode]}
+                          checked={rulesOptions.stackingMode === mode}
+                          disabled={busy || rulesMode === "classic" || !rulesOptions.stackingEnabled}
+                          name="stacking-mode"
+                          onChange={() => updateRulesOption("stackingMode", mode)}
+                          type="radio"
+                          value={mode}
+                        />
+                        <span>{STACKING_MODE_LABELS[mode]}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div className="rules-toggle-row">
+                    <label className="rules-toggle">
+                      <input
+                        aria-label="7-0 換牌"
+                        checked={rulesOptions.sevenZeroEnabled}
+                        disabled={busy || rulesMode === "classic"}
+                        onChange={(event) => updateRulesOption("sevenZeroEnabled", event.target.checked)}
+                        type="checkbox"
+                      />
+                      <span>7-0 換牌</span>
+                    </label>
+                    <RuleHint id="seven-zero" label="7-0 換牌">{RULE_HINTS.sevenZero}</RuleHint>
+                  </div>
+                  <div className="rules-toggle-row">
+                    <label className="rules-toggle">
+                      <input
+                        aria-label="Jump-In 搶牌"
+                        checked={rulesOptions.jumpInEnabled}
+                        disabled={busy || rulesMode === "classic"}
+                        onChange={(event) => updateRulesOption("jumpInEnabled", event.target.checked)}
+                        type="checkbox"
+                      />
+                      <span>Jump-In 搶牌</span>
+                    </label>
+                    <RuleHint id="jump-in" label="Jump-In 搶牌">{RULE_HINTS.jumpIn}</RuleHint>
+                  </div>
+                  <div className="rules-toggle-row">
+                    <label className="rules-toggle">
+                      <input
+                        aria-label="抽到能出的牌為止"
+                        checked={rulesOptions.drawToMatchEnabled}
+                        disabled={busy || rulesMode === "classic"}
+                        onChange={(event) => updateRulesOption("drawToMatchEnabled", event.target.checked)}
+                        type="checkbox"
+                      />
+                      <span>抽到能出的牌為止</span>
+                    </label>
+                    <RuleHint id="draw-to-match" label="抽到能出的牌為止">{RULE_HINTS.drawToMatch}</RuleHint>
+                  </div>
+                  <div className="rules-toggle-row">
+                    <label className="rules-toggle">
+                      <input
+                        aria-label="+4 質疑"
+                        checked={rulesOptions.drawFourChallengeEnabled}
+                        disabled={busy || rulesMode === "classic"}
+                        onChange={(event) => updateRulesOption("drawFourChallengeEnabled", event.target.checked)}
+                        type="checkbox"
+                      />
+                      <span>+4 質疑</span>
+                    </label>
+                    <RuleHint id="draw-four-challenge" label="+4 質疑">{RULE_HINTS.drawFourChallenge}</RuleHint>
+                  </div>
+                  <div className="rules-toggle-row">
+                    <label className="rules-toggle">
+                      <input
+                        aria-label="同回合多張連出"
+                        checked={rulesOptions.multiCardPlayEnabled}
+                        disabled={busy || rulesMode === "classic"}
+                        onChange={(event) => updateRulesOption("multiCardPlayEnabled", event.target.checked)}
+                        type="checkbox"
+                      />
+                      <span>同回合多張連出</span>
+                    </label>
+                    <RuleHint id="multi-card-play" label="同回合多張連出">{RULE_HINTS.multiCardPlay}</RuleHint>
+                  </div>
+                </fieldset>
+                  <small>{rulesMode === "classic" ? "經典模式不啟用台灣細項；先選擇台灣常見玩法，再調整下方設定。" : "可單獨關閉玩法；疊牌方式會決定 +2 與 +4 的混疊關係。"}</small>
+                <button className="button secondary" disabled={busy} onClick={saveRulesMode} type="button">儲存規則與細項</button>
+              </div>
               <button
                 className="button secondary"
                 disabled={room.players.length >= MAX_GAME_PLAYERS || busy}
@@ -372,6 +555,13 @@ function LobbyPage({ room, session, error, onError, onLeave }: RoomPageProps) {
             <>
               <h3>{me?.isReady ? "準備完成" : "還差一步"}</h3>
               <p>{me?.isReady ? "等待房主開始遊戲。" : "確認準備後，房主就能開始。"}</p>
+              <div className="rules-mode-readonly">
+                <span>遊戲規則</span>
+                <strong>{RULES_MODE_LABELS[room.rulesMode]}</strong>
+                {room.rulesMode === "taiwan" && (
+                  <small>{room.rulesOptions.stackingEnabled ? STACKING_MODE_LABELS[room.rulesOptions.stackingMode] : "疊牌關閉"} · {room.rulesOptions.sevenZeroEnabled ? "7-0 開啟" : "7-0 關閉"} · {room.rulesOptions.jumpInEnabled ? "搶牌開啟" : "搶牌關閉"} · {room.rulesOptions.drawToMatchEnabled ? "抽到能出" : "只抽一張"} · {room.rulesOptions.drawFourChallengeEnabled ? "+4 可質疑" : "+4 不可質疑"} · {room.rulesOptions.multiCardPlayEnabled ? "多張連出開啟" : "多張連出關閉"}</small>
+                )}
+              </div>
               <button
                 className={`button ${me?.isReady ? "secondary" : "primary"}`}
                 disabled={busy}
