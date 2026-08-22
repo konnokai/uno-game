@@ -9,7 +9,7 @@ export interface PageMetadata {
 const ROOM_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{6}$/u;
 const LOBBY_ROOM_PATH_PATTERN = /^\/lobby\/([A-HJ-NP-Z2-9]{6})\/?$/u;
 const DEFAULT_TITLE = "UNO｜即時多人卡牌遊戲";
-const DEFAULT_DESCRIPTION = "免註冊，輸入暱稱即可加入，和 2–8 位玩家即時遊玩經典 UNO。";
+const DEFAULT_DESCRIPTION = "免註冊，輸入暱稱即可加入，支援 2–8 人即時玩 UNO。";
 const IMAGE_ALT = "UNO 即時多人卡牌遊戲";
 
 /** Builds share metadata from query or lobby invitation URLs before React runs. */
@@ -25,9 +25,9 @@ export function getPageMetadata(url: URL): PageMetadata {
   }
 
   return {
-    title: invitationRoomCode ? `房主邀請你遊玩 UNO｜房號 ${invitationRoomCode}` : DEFAULT_TITLE,
+    title: invitationRoomCode ? `房主邀請你來玩 UNO｜房號 ${invitationRoomCode}` : DEFAULT_TITLE,
     description: invitationRoomCode
-      ? `加入房間 ${invitationRoomCode}，和朋友一起遊玩即時多人 UNO。輸入暱稱即可開始。`
+      ? `加入房間 ${invitationRoomCode}，和朋友一起即時玩 UNO。輸入暱稱就能開始。`
       : DEFAULT_DESCRIPTION,
     url: shareUrl.href,
     image: new URL("/og-image.png", url.origin).href,

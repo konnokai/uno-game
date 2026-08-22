@@ -104,7 +104,6 @@ a { color: inherit; }
   font-size: 0.85rem;
 }
 
-.connection-status small { display: none; }
 .status-dot { width: 0.55rem; height: 0.55rem; border-radius: 50%; background: #f59e0b; }
 .connection-status.connected .status-dot { background: #22c55e; box-shadow: 0 0 0.7rem #22c55e; }
 .connection-status.disconnected .status-dot { background: #ef4444; }

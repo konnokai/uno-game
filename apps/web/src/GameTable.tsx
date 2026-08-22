@@ -258,8 +258,8 @@ function ColorDialog({
     <div className="dialog-backdrop" role="presentation">
       <section aria-labelledby="color-title" aria-modal="true" className="color-dialog" role="dialog">
         <p className="eyebrow">WILD CARD</p>
-        <h3 id="color-title">選擇接下來的顏色</h3>
-        <p>{mode === "start" ? "你是起始玩家，請先觀察自己的手牌再決定顏色。" : "選色後會立即打出這張萬用牌。"}</p>
+        <h3 id="color-title">選擇接下來要用的顏色</h3>
+        <p>{mode === "start" ? "你是起始玩家，先看看手上的牌，再決定顏色。" : "選色後會立即打出這張萬用牌。"}</p>
         {mode === "start" && (
           <div className="starting-hand-preview">
             <div className="starting-hand-heading">
@@ -307,7 +307,7 @@ function TargetDialog({
       <section aria-labelledby="target-title" aria-modal="true" className="target-dialog" role="dialog">
         <p className="eyebrow">SEVEN SWAP</p>
         <h3 id="target-title">選擇交換手牌的玩家</h3>
-        <p>出 7 後，你會和指定玩家交換剩下的全部手牌。</p>
+        <p>出 7 後，你會和指定玩家交換手上的全部牌。</p>
         <div className="target-options">
           {players.filter((player) => player.id !== currentPlayerId).map((player) => (
             <button className="button secondary" key={player.id} onClick={() => onChoose(player.id)} type="button">
@@ -720,7 +720,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
         <div aria-live="assertive" className="uno-catch-effect" key={tableEffect.version} role="status">
           <div aria-hidden="true" className="uno-catch-lines" />
           <div className="uno-catch-copy">
-            <span>抓到了!</span>
+            <span>抓到了！</span>
             <strong>+{tableEffect.amount}</strong>
             <small>{playerName(room, tableEffect.targetPlayerId)} 漏喊 UNO</small>
           </div>
@@ -793,7 +793,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
         >
           <div className="table-ring" />
           {draggingCardPlayable && (
-            <div className="table-drop-hint">{tableDragActive ? "放開以出牌" : "拖到牌桌出牌"}</div>
+            <div className="table-drop-hint">{tableDragActive ? "放開即可出牌" : "把牌拖到牌桌上出牌"}</div>
           )}
           <div className="pile-zone">
             <button
@@ -813,7 +813,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
           </div>
           {shuffleEffect && (
             <div aria-live="polite" className="shuffle-notice" key={shuffleEffect.version} role="status">
-              <strong>{shuffleEffect.type === "initial" ? "洗牌發牌" : "重新洗牌"}</strong>
+              <strong>{shuffleEffect.type === "initial" ? "洗牌並發牌" : "重新洗牌"}</strong>
               <span>{shuffleEffect.type === "initial" ? "新牌局準備開始" : "棄牌已洗回牌庫"}</span>
             </div>
           )}
@@ -938,7 +938,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
             onClick={() => setDeclareUno((value) => !value)}
             type="button"
           >
-            {declareUno ? "已準備喊 UNO" : "一起喊 UNO"}
+            {declareUno ? "已準備喊 UNO" : "準備喊 UNO"}
           </button>
         )}
         {canCallUno && (
@@ -948,12 +948,12 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
         )}
         {canCatchUno && (
           <button className="catch-action" onClick={() => run((done) => socket.emit("game:catch-uno", { requestId: requestId() }, done))} type="button">
-            抓漏喊 UNO
+            抓到漏喊 UNO
           </button>
         )}
          {canPass && (
            <button className="button secondary" disabled={busy} onClick={() => run((done) => socket.emit("game:pass", { requestId: requestId() }, done))} type="button">
-             {game.drawnCardId ? "保留並結束" : "結束回合"}
+             {game.drawnCardId ? "保留新牌並結束" : "結束回合"}
            </button>
          )}
          {canDraw && (
@@ -990,7 +990,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
           <section aria-labelledby="challenge-title" aria-modal="true" className="challenge-dialog" role="dialog">
             <div className="challenge-card"><span>+4</span></div>
             <p className="eyebrow">WILD DRAW FOUR</p>
-            <h3 id="challenge-title">{game.rulesOptions.drawFourChallengeEnabled ? "要質疑這張抽四嗎？" : "請接受這張抽四"}</h3>
+            <h3 id="challenge-title">{game.rulesOptions.drawFourChallengeEnabled ? "要質疑這張抽四嗎？" : "請接受這次抽四"}</h3>
             {game.pendingDrawFour && (
               <p className="challenge-color-note">
                 <span className={`color-indicator color-${game.pendingDrawFour.chosenColor}`} />
@@ -1000,11 +1000,11 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
             <p>{game.rulesOptions.drawFourChallengeEnabled
               ? game.pendingDrawAmount > 4
                 ? `目前累積抽 ${game.pendingDrawAmount} 張。`
-                : "若對方出牌前持有目前顏色，質疑成功，對方抽四；否則你要抽六張。"
-              : "目前未開啟 +4 質疑，你需要直接抽取累積張數並跳過回合。"}</p>
+                : "若對方出牌前手上有目前顏色的牌，質疑成功，對方抽四張；否則你要抽六張。"
+              : "目前未開啟 +4 質疑，你要抽完累積張數並跳過回合。"}</p>
             <div className="challenge-actions">
               {canStackDrawCard && <button className="button secondary" disabled={busy} onClick={stackDrawCard} type="button">疊出 {stackableDrawCard?.value === "wild-draw-four" ? "+4" : "+2"}</button>}
-              <button className="button secondary" disabled={busy} onClick={() => run((done) => socket.emit("game:challenge-draw-four", { challenge: false, requestId: requestId() }, done))} type="button">接受並抽四</button>
+              <button className="button secondary" disabled={busy} onClick={() => run((done) => socket.emit("game:challenge-draw-four", { challenge: false, requestId: requestId() }, done))} type="button">{`接受並抽 ${game.pendingDrawAmount} 張`}</button>
               {game.rulesOptions.drawFourChallengeEnabled && <button className="button primary" disabled={busy} onClick={() => run((done) => socket.emit("game:challenge-draw-four", { challenge: true, requestId: requestId() }, done))} type="button">提出質疑</button>}
             </div>
           </section>
@@ -1035,7 +1035,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
             <p className="eyebrow">FINAL RESULT</p>
             <span className="result-kicker">{game.winnerId === session.playerId ? "VICTORY" : "GAME OVER"}</span>
             <h2>{game.winnerId === session.playerId ? "你贏了！" : `${playerName(room, game.winnerId)} 獲勝`}</h2>
-            <p>本局共進行到狀態 #{game.version}。要不要再來一局？</p>
+            <p>這局結束了。要不要再來一局？</p>
             <div className="result-actions">
               {me?.isHost && <button className="button primary" disabled={busy} onClick={rematch} type="button">再玩一局</button>}
               {!me?.isHost && <span>等待房主開啟下一局</span>}

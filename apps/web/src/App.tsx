@@ -51,11 +51,11 @@ const STACKING_MODE_LABELS: Record<StackingMode, string> = {
 const STACKING_MODE_ORDER: StackingMode[] = ["same-type", "draw-four-over-two", "mixed"];
 
 const RULE_HINTS = {
-  stacking: "開啟後，遇到累積中的 +2 或 +4，下一位可以依下方疊牌方式再出抽牌，將罰抽張數傳給下一位；關閉後必須直接抽完累積張數。",
+  stacking: "開啟後，遇到累積中的 +2 或 +4，下一位可以依下方設定繼續出 +2 或 +4，讓累積的罰抽張數傳給下一位；關閉後，必須一次抽完累積張數。",
   sevenZero: "出 7 時可指定一位玩家交換全部手牌；出 0 時，所有玩家依目前方向把手牌傳給下一位。",
-  jumpIn: "不在自己回合時，若手上有和棄牌堆頂牌顏色與牌面完全相同的牌，可以立即搶牌，出牌權從搶牌者繼續。",
+  jumpIn: "不是自己回合時，如果手上有和棄牌堆頂牌顏色、牌面都相同的牌，就能立即搶牌；接著由搶牌者繼續出牌。",
   drawToMatch: "輪到自己但沒有可出的牌時，持續從牌庫抽牌，直到抽到可出的牌；抽到後可以打出，也可以保留並結束回合。",
-  drawFourChallenge: "有人打出 +4 後，下家可以檢查對方是否仍持有目前顏色的牌。質疑成功由出牌者抽牌；質疑失敗則由質疑者抽 6 張。關閉後只能接受 +4。",
+  drawFourChallenge: "有人打出 +4 後，下一位玩家可以檢查對方出牌前手上是否有目前顏色的牌。質疑成功時，由出牌者抽牌；質疑失敗時，由質疑者抽 6 張。未開啟時，只能接受 +4。",
   multiCardPlay: "開啟後，一回合可以一次打出兩張以上相同數字或相同功能的非萬用牌。第一張必須合法，後續牌必須與第一張牌面值相同。",
 } as const;
 
@@ -204,11 +204,11 @@ function HomePage({ rooms, session, onSession, onError, error }: HomePageProps) 
             <p className="eyebrow">OPEN TABLES</p>
             <h2 id="room-list-title">房間清單</h2>
           </div>
-          <span>{rooms.length} 間等待中</span>
+          <span>目前有 {rooms.length} 間房間開放中</span>
         </div>
 
         {rooms.length === 0 ? (
-          <p className="empty-rooms">目前沒有公開房間，建立第一張牌桌吧。</p>
+          <p className="empty-rooms">目前沒有公開房間，先開一間吧。</p>
         ) : (
           <ul className="room-list">
             {rooms.map((availableRoom) => (
@@ -351,7 +351,7 @@ function LobbyPage({ room, session, error, onError, onLeave }: RoomPageProps) {
       <header className="room-header">
         <div>
           <p className="eyebrow">WAITING ROOM</p>
-          <h2>牌桌就緒</h2>
+          <h2>等待玩家加入</h2>
         </div>
         <button className="text-button" onClick={onLeave} type="button">離開房間</button>
       </header>
@@ -409,7 +409,7 @@ function LobbyPage({ room, session, error, onError, onLeave }: RoomPageProps) {
           {me?.isHost ? (
             <>
               <h3>你是房主</h3>
-              <p>邀請真人玩家，或加入機器人補滿牌桌。</p>
+              <p>邀請其他玩家，也可以加入機器人一起玩。</p>
               <form className="timeout-setting" onSubmit={saveTurnTimeout}>
                 <label htmlFor="turn-timeout">每回合出牌時間</label>
                 <div className="timeout-input-row">
@@ -425,7 +425,7 @@ function LobbyPage({ room, session, error, onError, onLeave }: RoomPageProps) {
                   <span>秒</span>
                   <button className="button secondary" disabled={busy} type="submit">儲存</button>
                 </div>
-                <small>預設 {DEFAULT_TURN_TIMEOUT_SECONDS} 秒，逾時會自動轉為機器人代打。</small>
+                <small>預設 {DEFAULT_TURN_TIMEOUT_SECONDS} 秒，時間到後會自動交給機器人代打。</small>
               </form>
               <div className="rules-mode-setting">
                 <label htmlFor="rules-mode">遊戲規則</label>
@@ -536,7 +536,7 @@ function LobbyPage({ room, session, error, onError, onLeave }: RoomPageProps) {
                     <RuleHint id="multi-card-play" label="同回合多張連出">{RULE_HINTS.multiCardPlay}</RuleHint>
                   </div>
                 </fieldset>
-                  <small>{rulesMode === "classic" ? "經典模式不啟用台灣細項；先選擇台灣常見玩法，再調整下方設定。" : "可單獨關閉玩法；疊牌方式會決定 +2 與 +4 的混疊關係。"}</small>
+                  <small>{rulesMode === "classic" ? "經典模式不套用台灣細項；切換到台灣常見玩法後，才能調整下方設定。" : "可單獨關閉玩法；疊牌方式會決定 +2 與 +4 的混疊關係。"}</small>
                 <button className="button secondary" disabled={busy} onClick={saveRulesMode} type="button">儲存規則與細項</button>
               </div>
               <button
@@ -554,7 +554,7 @@ function LobbyPage({ room, session, error, onError, onLeave }: RoomPageProps) {
           ) : (
             <>
               <h3>{me?.isReady ? "準備完成" : "還差一步"}</h3>
-              <p>{me?.isReady ? "等待房主開始遊戲。" : "確認準備後，房主就能開始。"}</p>
+              <p>{me?.isReady ? "等待房主開始遊戲。" : "按下準備後，房主就能開始。"}</p>
               <div className="rules-mode-readonly">
                 <span>遊戲規則</span>
                 <strong>{RULES_MODE_LABELS[room.rulesMode]}</strong>

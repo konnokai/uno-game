@@ -7,7 +7,6 @@ export function ConnectionStatus() {
   const [state, setState] = useState<ConnectionState>(
     socket.connected ? "connected" : "connecting",
   );
-  const [serverMessage] = useState("Cloudflare Worker");
 
   useEffect(() => {
     function handleConnect() {
@@ -40,7 +39,6 @@ export function ConnectionStatus() {
     <div className={`connection-status ${state}`} role="status">
       <span className="status-dot" aria-hidden="true" />
       <span>{labels[state]}</span>
-      {serverMessage && <small>{serverMessage}</small>}
     </div>
   );
 }
