@@ -13,6 +13,6 @@
     "build": "pnpm --filter @uno/shared build && pnpm --filter @uno/web build && pnpm --filter @uno/worker build",
     "test": "pnpm --filter @uno/shared test && pnpm --filter @uno/worker test",
     "typecheck": "pnpm --filter @uno/shared typecheck && pnpm --filter @uno/web typecheck && pnpm --filter @uno/worker typecheck",
-    "deploy:worker": "pnpm --filter @uno/worker deploy"
+    "deploy:worker": "pnpm --filter @uno/worker run deploy"
   }
 }
