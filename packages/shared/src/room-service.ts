@@ -24,7 +24,7 @@ import type {
   RoomSnapshot,
 } from "./room.js";
 import { decideBotAction, type BotGameView } from "./game/bot.js";
-import { normalizeNickname } from "./room.js";
+import { DEFAULT_TURN_TIMEOUT_SECONDS, normalizeNickname } from "./room.js";
 
 export interface StoredRoomPlayer {
   id: string;
@@ -40,6 +40,8 @@ export interface StoredRoomPlayer {
 export interface StoredRoom {
   code: string;
   hostId: string;
+  turnTimeoutSeconds: number;
+  turnDeadlineAt: number | null;
   players: StoredRoomPlayer[];
   game: GameState | null;
   actionHistory: GameHistoryEntry[];
@@ -54,6 +56,7 @@ export interface NewRoomPlayer {
 
 export interface RoomServiceOptions {
   createId?: () => string;
+  now?: () => number;
 }
 
 export interface PlayerOperationResult {
@@ -90,6 +93,7 @@ function botGameView(game: GameState, botId: string): BotGameView {
       : null,
     currentPlayerId: currentPlayer.id,
     currentColor: game.currentColor,
+    hasDrawnThisTurn: game.hasDrawnThisTurn,
     drawnCardId: game.drawnCardId && bot.hand.some((card) => card.id === game.drawnCardId)
       ? game.drawnCardId
       : null,
@@ -101,6 +105,8 @@ export function createRoomState(code: string, player: NewRoomPlayer): StoredRoom
   return {
     code,
     hostId: player.id,
+    turnTimeoutSeconds: DEFAULT_TURN_TIMEOUT_SECONDS,
+    turnDeadlineAt: null,
     players: [{
       ...player,
       isReady: false,
@@ -121,12 +127,15 @@ export function createRoomState(code: string, player: NewRoomPlayer): StoredRoom
  */
 export class RoomService {
   private readonly createId: () => string;
+  private readonly now: () => number;
 
   constructor(
     private readonly room: StoredRoom,
     options: RoomServiceOptions = {},
   ) {
     this.createId = options.createId ?? (() => crypto.randomUUID());
+    this.now = options.now ?? Date.now;
+    this.normalizeTimingState();
   }
 
   get code(): string {
@@ -190,6 +199,7 @@ export class RoomService {
     player.isConnected = true;
     player.isBotManaged = false;
     delete player.reservedAt;
+    if (this.isCurrentPlayer(player.id)) this.resetTurnDeadline();
     if (changed) this.room.version += 1;
     return { ok: true, playerId: player.id, reconnected: changed };
   }
@@ -205,6 +215,20 @@ export class RoomService {
     if (this.room.game !== null) return failure("GAME_ALREADY_STARTED", "遊戲已經開始");
     if (found.player.id === this.room.hostId) return failure("HOST_CANNOT_READY", "房主不需要準備");
     found.player.isReady = isReady;
+    this.room.version += 1;
+    return { ok: true, room: this.snapshot() };
+  }
+
+  setTurnTimeout(playerId: string, seconds: number): RoomActionResponse {
+    const found = this.findPlayer(playerId);
+    if (!found) return failure("NOT_IN_ROOM", "你不在房間內");
+    if (found.player.id !== this.room.hostId) return failure("HOST_ONLY", "只有房主可以設定出牌時間");
+    if (this.room.game !== null) return failure("GAME_ALREADY_STARTED", "遊戲開始後不能修改出牌時間");
+    if (!Number.isSafeInteger(seconds) || seconds <= 0) {
+      return failure("INVALID_TURN_TIMEOUT", "出牌時間必須是大於 0 的整數秒");
+    }
+    if (this.room.turnTimeoutSeconds === seconds) return { ok: true, room: this.snapshot() };
+    this.room.turnTimeoutSeconds = seconds;
     this.room.version += 1;
     return { ok: true, room: this.snapshot() };
   }
@@ -259,6 +283,9 @@ export class RoomService {
     if (found.player.isBot) return failure("BOT_CONTROL_UNAVAILABLE", "機器人座位不需要代管");
     if (found.player.isBotManaged === enabled) return { ok: true, room: this.snapshot() };
     found.player.isBotManaged = enabled;
+    if (this.isCurrentPlayer(playerId)) {
+      this.room.turnDeadlineAt = enabled ? null : this.now() + this.room.turnTimeoutSeconds * 1_000;
+    }
     this.room.version += 1;
     return { ok: true, room: this.snapshot() };
   }
@@ -281,6 +308,7 @@ export class RoomService {
       player.isBotManaged = false;
       delete player.reservedAt;
     });
+    this.resetTurnDeadline();
     this.room.version += 1;
     return { ok: true, room: this.snapshot() };
   }
@@ -300,24 +328,27 @@ export class RoomService {
       player.isBotManaged = false;
       delete player.reservedAt;
     });
+    this.resetTurnDeadline();
     this.room.version += 1;
     return { ok: true, room: this.snapshot() };
   }
 
   leave(playerId: string): DisconnectResult {
-    const playerIndex = this.room.players.findIndex((player) => player.id === playerId);
-    if (playerIndex < 0) return { room: null, deleted: false };
+    const player = this.room.players.find((candidate) => candidate.id === playerId);
+    if (!player) return { room: null, deleted: false };
 
-    this.room.players.splice(playerIndex, 1);
-    if (this.room.game !== null) {
-      this.room.game = null;
-      this.room.actionHistory = [];
-      this.room.players = this.room.players.filter((player) => player.isConnected);
-      this.room.players.forEach((player) => {
-        player.isReady = player.isBot;
-        player.isBotManaged = false;
-      });
+    if (this.room.game?.phase !== "finished" && this.room.game !== null && !player.isBot) {
+      player.isConnected = false;
+      player.isBotManaged = true;
+      delete player.reservedAt;
+      if (this.isCurrentPlayer(player.id)) this.room.turnDeadlineAt = null;
+      this.room.version += 1;
+      if (!this.hasConnectedHuman()) return { room: null, deleted: true };
+      return { room: this.snapshot(), deleted: false };
     }
+
+    const playerIndex = this.room.players.indexOf(player);
+    this.room.players.splice(playerIndex, 1);
     return this.finishPlayerRemoval();
   }
 
@@ -332,9 +363,9 @@ export class RoomService {
       player.isConnected = false;
       player.isBotManaged = true;
       delete player.reservedAt;
-      this.transferHost();
-      if (!this.hasConnectedHuman()) return { room: null, deleted: true };
+      if (this.isCurrentPlayer(player.id)) this.room.turnDeadlineAt = null;
       this.room.version += 1;
+      if (!this.hasConnectedHuman()) return { room: null, deleted: true };
       return { room: this.snapshot(), deleted: false };
     }
 
@@ -375,8 +406,14 @@ export class RoomService {
   }
 
   hasPendingBotAction(): boolean {
-    if (!this.hasConnectedHuman() || !this.room.game) return false;
-    if (this.room.game.unoVulnerablePlayerId && this.room.players.some(isBotControlled)) return true;
+    if (!this.hasConnectedHuman() || !this.room.game || this.room.game.phase === "finished") return false;
+    const vulnerablePlayer = this.room.players.find((player) =>
+      player.id === this.room.game!.unoVulnerablePlayerId,
+    );
+    if (vulnerablePlayer && isBotControlled(vulnerablePlayer)) return true;
+    if (this.room.game.unoVulnerablePlayerId && this.room.players.some((player) =>
+      player.id !== this.room.game!.unoVulnerablePlayerId && isBotControlled(player),
+    )) return true;
     if (this.room.game.phase === "awaiting-draw-four-challenge") {
       return this.room.players.some((player) =>
         isBotControlled(player) && player.id === this.room.game!.pendingDrawFour?.targetId,
@@ -409,8 +446,31 @@ export class RoomService {
     return reservations.length > 0 ? Math.min(...reservations) : null;
   }
 
+  nextTurnDeadlineAt(): number | null {
+    if (!this.room.game || this.room.game.phase === "finished") return null;
+    return this.room.turnDeadlineAt;
+  }
+
+  /** Converts an expired human turn into bot control before any late action is accepted. */
+  expireTurn(now = this.now()): boolean {
+    if (!this.room.game || this.room.game.phase === "finished" ||
+      this.room.turnDeadlineAt === null || this.room.turnDeadlineAt > now) {
+      return false;
+    }
+    const current = this.room.game.players[this.room.game.currentPlayerIndex];
+    const player = current && this.room.players.find((candidate) => candidate.id === current.id);
+    this.room.turnDeadlineAt = null;
+    if (!player || player.isBot || player.isBotManaged) {
+      this.room.version += 1;
+      return true;
+    }
+    player.isBotManaged = true;
+    this.room.version += 1;
+    return true;
+  }
+
   performBotAction(): boolean {
-    if (!this.hasConnectedHuman() || !this.room.game) return false;
+    if (!this.hasConnectedHuman() || !this.room.game || this.room.game.phase === "finished") return false;
 
     const vulnerablePlayer = this.room.players.find((player) =>
       player.id === this.room.game!.unoVulnerablePlayerId,
@@ -476,6 +536,7 @@ export class RoomService {
       code: this.room.code,
       phase: this.room.game?.phase ?? "lobby",
       hostId: this.room.hostId,
+      turnTimeoutSeconds: this.room.turnTimeoutSeconds,
       players: this.room.players.map((player) => ({
         id: player.id,
         nickname: player.nickname,
@@ -512,7 +573,7 @@ export class RoomService {
     if (nextHost) this.room.hostId = nextHost.id;
   }
 
-  private hasConnectedHuman(): boolean {
+  hasConnectedHuman(): boolean {
     return this.room.players.some((player) => !player.isBot && player.isConnected);
   }
 
@@ -544,6 +605,7 @@ export class RoomService {
   private acceptRoomGameResult(result: RuleResult): GameActionResponse {
     if (!result.ok) return { ok: false, error: result.error };
     this.room.game = result.state;
+    this.updateTurnDeadlineAfterAction(this.room.game.lastAction.type);
     this.room.actionHistory.push(this.historyEntry(this.room.game));
     this.room.actionHistory = this.room.actionHistory.slice(-40);
     if (this.room.game.phase === "finished") {
@@ -557,6 +619,7 @@ export class RoomService {
       });
       this.room.game.drawPile = [];
       this.room.game.discardPile = this.room.game.discardPile.slice(-1);
+      this.room.game.hasDrawnThisTurn = false;
       this.room.game.drawnCardId = null;
     }
     this.room.version += 1;
@@ -590,12 +653,17 @@ export class RoomService {
       currentPlayerId: currentPlayer.id,
       direction: game.direction,
       phase: game.phase,
+      hasDrawnThisTurn: currentPlayer.id === playerId ? game.hasDrawnThisTurn : false,
       drawnCardId: game.drawnCardId && player.hand.some((card) => card.id === game.drawnCardId)
         ? game.drawnCardId
         : null,
       unoVulnerablePlayerId: game.unoVulnerablePlayerId,
       pendingDrawFour: game.pendingDrawFour
-        ? { attackerId: game.pendingDrawFour.attackerId, targetId: game.pendingDrawFour.targetId }
+        ? {
+            attackerId: game.pendingDrawFour.attackerId,
+            targetId: game.pendingDrawFour.targetId,
+            chosenColor: game.currentColor!,
+          }
         : null,
       winnerId: game.winnerId,
       lastAction: { ...game.lastAction },
@@ -604,7 +672,56 @@ export class RoomService {
         action: { ...entry.action },
         ...(entry.card ? { card: { ...entry.card } } : {}),
       })),
+      turnDeadlineAt: this.room.turnDeadlineAt,
       version: game.version,
     };
+  }
+
+  private isCurrentPlayer(playerId: string): boolean {
+    return this.room.game?.players[this.room.game.currentPlayerIndex]?.id === playerId;
+  }
+
+  private resetTurnDeadline(): void {
+    if (!this.room.game || this.room.game.phase === "finished") {
+      this.room.turnDeadlineAt = null;
+      return;
+    }
+    const current = this.room.game.players[this.room.game.currentPlayerIndex];
+    const player = current && this.room.players.find((candidate) => candidate.id === current.id);
+    this.room.turnDeadlineAt = player && !isBotControlled(player)
+      ? this.now() + this.room.turnTimeoutSeconds * 1_000
+      : null;
+  }
+
+  private updateTurnDeadlineAfterAction(actionType: GameState["lastAction"]["type"]): void {
+    if (!this.room.game || this.room.game.phase === "finished") {
+      this.room.turnDeadlineAt = null;
+      return;
+    }
+    if (actionType === "play-card" || actionType === "pass" ||
+      actionType === "accept-draw-four" || actionType === "challenge-draw-four") {
+      this.resetTurnDeadline();
+    } else {
+      const current = this.room.game.players[this.room.game.currentPlayerIndex];
+      const player = current && this.room.players.find((candidate) => candidate.id === current.id);
+      if (player && isBotControlled(player)) this.room.turnDeadlineAt = null;
+      else if (this.room.turnDeadlineAt === null) this.resetTurnDeadline();
+    }
+  }
+
+  private normalizeTimingState(): void {
+    if (this.room.game && this.room.game.hasDrawnThisTurn === undefined) {
+      this.room.game.hasDrawnThisTurn = this.room.game.drawnCardId !== null;
+    }
+    if (!Number.isSafeInteger(this.room.turnTimeoutSeconds) || this.room.turnTimeoutSeconds <= 0) {
+      this.room.turnTimeoutSeconds = DEFAULT_TURN_TIMEOUT_SECONDS;
+    }
+    if (this.room.turnDeadlineAt === undefined ||
+      (this.room.turnDeadlineAt !== null && !Number.isFinite(this.room.turnDeadlineAt))) {
+      this.room.turnDeadlineAt = null;
+    }
+    if (this.room.game && this.room.game.phase !== "finished" && this.room.turnDeadlineAt === null) {
+      this.resetTurnDeadline();
+    }
   }
 }

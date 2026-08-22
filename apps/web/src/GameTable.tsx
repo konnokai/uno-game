@@ -276,6 +276,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
     | { type: "catch"; playerId: string | null; targetPlayerId: string | null; amount: number; version: number }
     | null
   >(null);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     if (selectedCardId && !game?.hand.some((card) => card.id === selectedCardId)) {
@@ -298,6 +299,13 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
         : next;
     });
   }, [game]);
+
+  useEffect(() => {
+    if (game?.turnDeadlineAt === null || game?.turnDeadlineAt === undefined) return;
+    setNow(Date.now());
+    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
+  }, [game?.turnDeadlineAt]);
 
   useEffect(() => {
     if (!game?.lastAction.shuffle) {
@@ -366,20 +374,23 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
   const isPlayingTurn = !paused && !isBotManaged && isMyTurn && game.phase === "playing" && game.currentColor !== null;
   const selectedCardPlayable = selectedCard !== null &&
     isPlayingTurn &&
-    (!game.drawnCardId || game.drawnCardId === selectedCard.id) &&
+    (!game.hasDrawnThisTurn || game.drawnCardId === selectedCard.id) &&
     isCardPlayable(selectedCard, game.topDiscard, game.currentColor!);
   const draggingCard = game.hand.find((card) => card.id === draggingCardId) ?? null;
   const draggingCardPlayable = draggingCard !== null &&
     isPlayingTurn &&
-    (!game.drawnCardId || game.drawnCardId === draggingCard.id) &&
+    (!game.hasDrawnThisTurn || game.drawnCardId === draggingCard.id) &&
     isCardPlayable(draggingCard, game.topDiscard, game.currentColor!);
-  const canDraw = isPlayingTurn && game.drawnCardId === null;
-  const canPass = isPlayingTurn && game.drawnCardId !== null;
+  const canDraw = isPlayingTurn && !game.hasDrawnThisTurn;
+  const canPass = isPlayingTurn && game.hasDrawnThisTurn;
   const canCallUno = !paused && !isBotManaged && game.unoVulnerablePlayerId === session.playerId;
   const canCatchUno = !paused && !isBotManaged && game.unoVulnerablePlayerId !== null && !canCallUno;
   const isDrawFourTarget = !paused && !isBotManaged && game.phase === "awaiting-draw-four-challenge" &&
     game.pendingDrawFour?.targetId === session.playerId;
   const shouldChooseStartingColor = !paused && !isBotManaged && game.currentColor === null && isMyTurn && game.phase === "playing";
+  const turnRemainingSeconds = game.turnDeadlineAt === null
+    ? null
+    : Math.max(0, Math.ceil((game.turnDeadlineAt - now) / 1_000));
 
   function run(send: (done: (response: GameActionResponse) => void) => void) {
     setBusy(true);
@@ -421,7 +432,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
 
   function isPlayableNow(card: Card): boolean {
     return isPlayingTurn &&
-      (!game!.drawnCardId || game!.drawnCardId === card.id) &&
+      (!game!.hasDrawnThisTurn || game!.drawnCardId === card.id) &&
       isCardPlayable(card, game!.topDiscard, game!.currentColor!);
   }
 
@@ -496,7 +507,10 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
         <div className={`turn-banner ${isMyTurn ? "is-mine" : ""}`} aria-live="polite">
           <span className={`color-indicator ${game.currentColor ? `color-${game.currentColor}` : "color-wild"}`} />
           <div>
-            <small>{game.direction === 1 ? "往下 ↓" : "往上 ↑"} · 目前顏色</small>
+            <small>
+              {turnRemainingSeconds === null ? "未啟動倒數" : `剩餘 ${turnRemainingSeconds} 秒`}
+              {` · ${game.direction === 1 ? "往下 ↓" : "往上 ↑"} · 目前顏色`}
+            </small>
             <strong>{isMyTurn && isBotManaged ? "機器人正在代管" : isMyTurn ? "輪到你了" : `等待 ${playerName(room, game.currentPlayerId)}`}</strong>
           </div>
         </div>
@@ -559,7 +573,9 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
       <div className="game-main">
       <section className="table-shell">
         <div
-          aria-label={canPass ? "牌桌，雙擊可保留抽到的牌並結束回合" : "UNO 牌桌"}
+          aria-label={canPass
+            ? game.drawnCardId ? "牌桌，雙擊可保留抽到的牌並結束回合" : "牌桌，雙擊可結束抽牌回合"
+            : "UNO 牌桌"}
           className={`felt-table ${draggingCardPlayable ? "is-drop-target" : ""} ${tableDragActive ? "is-drop-active" : ""}`}
           onDoubleClick={(event) => {
             if (!canPass || (event.target as Element).closest(".pile-zone")) return;
@@ -612,7 +628,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
               <span>{shuffleEffect.type === "initial" ? "新牌局準備開始" : "棄牌已洗回牌庫"}</span>
             </div>
           )}
-          {canPass && <span className="table-pass-hint">雙擊牌桌 · 保留新牌並結束</span>}
+          {canPass && <span className="table-pass-hint">{game.drawnCardId ? "雙擊牌桌 · 保留新牌並結束" : "雙擊牌桌 · 結束抽牌回合"}</span>}
           <p className="action-feed" aria-live="polite">
             <span>LAST MOVE</span>
             {actionMessage(game, room)}
@@ -751,11 +767,11 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
             抓漏喊 UNO
           </button>
         )}
-        {canPass && (
-          <button className="button secondary" disabled={busy} onClick={() => run((done) => socket.emit("game:pass", { requestId: requestId() }, done))} type="button">
-            保留並結束
-          </button>
-        )}
+         {canPass && (
+           <button className="button secondary" disabled={busy} onClick={() => run((done) => socket.emit("game:pass", { requestId: requestId() }, done))} type="button">
+             {game.drawnCardId ? "保留並結束" : "結束回合"}
+           </button>
+         )}
         {canDraw && (
           <button className="button secondary" disabled={busy} onClick={() => run((done) => socket.emit("game:draw-card", { requestId: requestId() }, done))} type="button">
             抽一張牌
@@ -791,6 +807,12 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
             <div className="challenge-card"><span>+4</span></div>
             <p className="eyebrow">WILD DRAW FOUR</p>
             <h3 id="challenge-title">要質疑這張抽四嗎？</h3>
+            {game.pendingDrawFour && (
+              <p className="challenge-color-note">
+                <span className={`color-indicator color-${game.pendingDrawFour.chosenColor}`} />
+                對方選擇：<strong>{COLOR_LABELS[game.pendingDrawFour.chosenColor]}</strong>
+              </p>
+            )}
             <p>若對方出牌前持有目前顏色，質疑成功，對方抽四；否則你要抽六張。</p>
             <div className="challenge-actions">
               <button className="button secondary" disabled={busy} onClick={() => run((done) => socket.emit("game:challenge-draw-four", { challenge: false, requestId: requestId() }, done))} type="button">接受並抽四</button>

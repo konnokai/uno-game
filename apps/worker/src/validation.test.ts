@@ -61,4 +61,17 @@ describe("WebSocket protocol validation", () => {
       error: { code: "INVALID_PAYLOAD" },
     });
   });
+
+  it("validates the room turn timeout payload", () => {
+    expect(parseClientMessage(JSON.stringify({
+      type: "room:set-turn-timeout",
+      requestId: "timeout-01",
+      payload: { requestId: "timeout-01", seconds: 45 },
+    })).ok).toBe(true);
+    expect(parseClientMessage(JSON.stringify({
+      type: "room:set-turn-timeout",
+      requestId: "timeout-02",
+      payload: { requestId: "timeout-02", seconds: 0 },
+    })).ok).toBe(false);
+  });
 });

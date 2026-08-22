@@ -69,6 +69,7 @@ export interface GameState {
   currentPlayerIndex: number;
   direction: Direction;
   phase: Exclude<GamePhase, "lobby">;
+  hasDrawnThisTurn: boolean;
   drawnCardId: string | null;
   unoVulnerablePlayerId: string | null;
   pendingDrawFour: PendingDrawFour | null;

@@ -13,6 +13,7 @@ function gameWithBot(hand: Card[], overrides: Partial<BotGameView> = {}): BotGam
     currentColor: "red",
     currentPlayerId: "bot",
     phase: "playing",
+    hasDrawnThisTurn: false,
     drawnCardId: null,
     pendingDrawFour: null,
     ...overrides,
@@ -56,13 +57,19 @@ describe("bot player", () => {
       card("green-2", "green", 2),
       card("blue-3", "blue", 3),
     ];
-    expect(decideBotAction(gameWithBot(hand, { drawnCardId: "drawn-wild" }), "bot"))
+    expect(decideBotAction(gameWithBot(hand, { hasDrawnThisTurn: true, drawnCardId: "drawn-wild" }), "bot"))
       .toEqual({
         type: "play",
         cardId: "drawn-wild",
         chosenColor: "green",
         declareUno: false,
       });
+  });
+
+  it("passes after drawing a card that cannot be played", () => {
+    expect(decideBotAction(gameWithBot([
+      card("drawn-blue", "blue", 2),
+    ], { hasDrawnThisTurn: true, drawnCardId: "drawn-blue" }), "bot")).toEqual({ type: "pass" });
   });
 
   it("chooses a color for an initial wild", () => {

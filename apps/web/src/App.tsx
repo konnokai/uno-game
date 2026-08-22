@@ -9,6 +9,7 @@ import type {
   SessionAttachResponse,
 } from "@uno/shared";
 import {
+  DEFAULT_TURN_TIMEOUT_SECONDS,
   MAX_NICKNAME_LENGTH,
   MAX_GAME_PLAYERS,
   MIN_NICKNAME_LENGTH,
@@ -204,12 +205,17 @@ function LobbyPage({ room, session, error, onError, onLeave }: RoomPageProps) {
   const { roomCode = "" } = useParams();
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [timeoutSeconds, setTimeoutSeconds] = useState(String(DEFAULT_TURN_TIMEOUT_SECONDS));
 
   useEffect(() => {
     if (room?.code === roomCode && room.phase !== "lobby") {
       navigate(`/game/${roomCode}`, { replace: true });
     }
   }, [navigate, room, roomCode]);
+
+  useEffect(() => {
+    if (room) setTimeoutSeconds(String(room.turnTimeoutSeconds));
+  }, [room?.turnTimeoutSeconds]);
 
   if (!session || session.roomCode !== roomCode) {
     return <MissingSession roomCode={roomCode} />;
@@ -245,6 +251,18 @@ function LobbyPage({ room, session, error, onError, onLeave }: RoomPageProps) {
     setBusy(true);
     onError("");
     socket.emit("game:start", { requestId: requestId() }, applyAction);
+  }
+
+  function saveTurnTimeout(event: FormEvent) {
+    event.preventDefault();
+    const seconds = Number(timeoutSeconds);
+    if (!Number.isSafeInteger(seconds) || seconds <= 0) {
+      onError("出牌時間必須是大於 0 的整數秒");
+      return;
+    }
+    setBusy(true);
+    onError("");
+    socket.emit("room:set-turn-timeout", { seconds, requestId: requestId() }, applyAction);
   }
 
   function addBot() {
@@ -320,6 +338,23 @@ function LobbyPage({ room, session, error, onError, onLeave }: RoomPageProps) {
             <>
               <h3>你是房主</h3>
               <p>邀請真人玩家，或加入機器人補滿牌桌。</p>
+              <form className="timeout-setting" onSubmit={saveTurnTimeout}>
+                <label htmlFor="turn-timeout">每回合出牌時間</label>
+                <div className="timeout-input-row">
+                  <input
+                    id="turn-timeout"
+                    min="1"
+                    onChange={(event) => setTimeoutSeconds(event.target.value)}
+                    required
+                    step="1"
+                    type="number"
+                    value={timeoutSeconds}
+                  />
+                  <span>秒</span>
+                  <button className="button secondary" disabled={busy} type="submit">儲存</button>
+                </div>
+                <small>預設 {DEFAULT_TURN_TIMEOUT_SECONDS} 秒，逾時會自動轉為機器人代打。</small>
+              </form>
               <button
                 className="button secondary"
                 disabled={room.players.length >= MAX_GAME_PLAYERS || busy}
@@ -427,7 +462,7 @@ export function App() {
       setError(payload.error.message);
     }
     function handleGameState(nextGame: GameSnapshot) {
-      setGame((current) => current && current.version >= nextGame.version ? current : nextGame);
+      setGame((current) => current && current.version > nextGame.version ? current : nextGame);
     }
     function handleGameStarted({ room: nextRoom }: { room: RoomSnapshot }) {
       setGame(null);

@@ -3,6 +3,12 @@
   "name": "uno-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-21",
+  "routes": [
+    {
+      "pattern": "uno-api.konnokai.me",
+      "custom_domain": true
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {
@@ -22,6 +28,7 @@
     }
   ],
   "vars": {
+    "ALLOWED_ORIGINS": "https://uno.konnokai.me,http://localhost:5173",
     "BOT_TURN_DELAY_MS": "650",
     "ACTION_RATE_LIMIT_PER_WINDOW": "20"
   }

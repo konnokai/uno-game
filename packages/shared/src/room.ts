@@ -10,6 +10,7 @@ import type {
 export const ROOM_CODE_LENGTH = 6;
 export const MIN_NICKNAME_LENGTH = 2;
 export const MAX_NICKNAME_LENGTH = 20;
+export const DEFAULT_TURN_TIMEOUT_SECONDS = 30;
 
 export function normalizeNickname(value: string): string | null {
   const nickname = value.normalize("NFC").trim().replace(/\s+/gu, " ");
@@ -39,6 +40,7 @@ export interface RoomSnapshot {
   code: string;
   phase: GamePhase;
   hostId: string;
+  turnTimeoutSeconds: number;
   players: RoomPlayer[];
   canStart: boolean;
   winnerId: string | null;
@@ -86,6 +88,10 @@ export interface SetBotControlPayload extends ActionRequestPayload {
   enabled: boolean;
 }
 
+export interface SetTurnTimeoutPayload extends ActionRequestPayload {
+  seconds: number;
+}
+
 export interface ActionRequestPayload {
   requestId: string;
 }
@@ -108,6 +114,7 @@ export type RoomErrorCode =
   | "BOT_NOT_FOUND"
   | "BOT_CONTROL_UNAVAILABLE"
   | "BOT_CONTROL_ACTIVE"
+  | "INVALID_TURN_TIMEOUT"
   | "GAME_NOT_FINISHED"
   | "GAME_PAUSED"
   | "RATE_LIMITED"
@@ -132,6 +139,7 @@ export type RoomActionName =
   | "room:ready"
   | "room:add-bot"
   | "room:remove-bot"
+  | "room:set-turn-timeout"
   | "room:leave"
   | "game:start"
   | "game:rematch"
@@ -161,6 +169,7 @@ export interface PublicGamePlayer {
 export interface PublicPendingDrawFour {
   attackerId: string;
   targetId: string;
+  chosenColor: CardColor;
 }
 
 export interface GameHistoryEntry {
@@ -179,12 +188,14 @@ export interface GameSnapshot {
   currentPlayerId: string;
   direction: Direction;
   phase: Exclude<GamePhase, "lobby">;
+  hasDrawnThisTurn: boolean;
   drawnCardId: string | null;
   unoVulnerablePlayerId: string | null;
   pendingDrawFour: PublicPendingDrawFour | null;
   winnerId: string | null;
   lastAction: GameAction;
   actionHistory: GameHistoryEntry[];
+  turnDeadlineAt: number | null;
   version: number;
 }
 
@@ -235,6 +246,7 @@ export type ClientMessage =
   | { type: "room:ready"; requestId: string; payload: SetReadyPayload }
   | { type: "room:add-bot"; requestId: string; payload: ActionRequestPayload }
   | { type: "room:remove-bot"; requestId: string; payload: RemoveBotPayload }
+  | { type: "room:set-turn-timeout"; requestId: string; payload: SetTurnTimeoutPayload }
   | { type: "room:leave"; requestId: string; payload: ActionRequestPayload }
   | { type: "game:start"; requestId: string; payload: ActionRequestPayload }
   | { type: "game:rematch"; requestId: string; payload: ActionRequestPayload }

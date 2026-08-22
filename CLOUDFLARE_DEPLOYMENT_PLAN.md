@@ -1,6 +1,6 @@
 # Cloudflare Pages + Workers 遷移計畫
 
-文件狀態：已實作，待正式 Cloudflare 帳戶驗證
+文件狀態：Worker/Pages 已部署，待 Pages DNS 驗證與 GitHub 自動部署設定
 最後更新：2026-08-22
 
 ## 1. 目標
@@ -15,7 +15,7 @@
 - 不需要自己的電腦持續執行後端。
 - 保留目前的 UNO 規則、私人手牌隔離、重新連線、機器人代管及房間清理行為。
 
-目前程式已依本計畫完成遷移骨架與本機驗證：`apps/worker` 提供 Worker、Room Durable Object、LobbyDirectory、原生 WebSocket protocol、SQLite-backed storage 及 Alarm；`apps/web` 使用 HTTP room API 與原生 WebSocket；舊 `apps/server` 已移除。正式部署前仍需在 Cloudflare 設定 `ALLOWED_ORIGINS`、網域及 GitHub Builds，並執行正式 namespace 的 migration。
+目前程式已依本計畫完成遷移：`apps/worker` 提供 Worker、Room Durable Object、LobbyDirectory、原生 WebSocket protocol、SQLite-backed storage 及 Alarm；`apps/web` 使用 HTTP room API 與原生 WebSocket；舊 `apps/server` 已移除。Worker 已部署至 `uno-api.konnokai.me`，Durable Object migration 已建立；Pages project `uno-game` 也已有 production deployment。Pages custom domain 已建立，但 Cloudflare 回報 `CNAME record not set`，需先把 `uno.konnokai.me` 指向 `uno-game-8em.pages.dev`。剩餘 Cloudflare dashboard 工作是把 GitHub `konnokai/uno-game` 接到 Pages/Workers Builds。
 
 目前帳戶已使用 Cloudflare Workers Paid plan，每月固定費用為 5 美元。依目前使用量，預期不會超過內含額度；實作仍需在 Cloudflare dashboard 觀察實際用量。
 
@@ -301,9 +301,17 @@ Vite 與 Wrangler dev 使用固定的本機 URL。前端使用 `VITE_SERVER_URL`
 - Production branch：`main`
 - `NODE_VERSION=22.12.0`
 - `PNPM_VERSION=10.15.0`
-- Production `VITE_SERVER_URL=https://uno-api.example.com`
+- Production `VITE_SERVER_URL=https://uno-api.konnokai.me`
 - Preview 使用 Worker preview URL 或專用 preview API 網域
 - Watch paths：`apps/web/**`、`packages/shared/**`、workspace 設定與 lockfile
+
+目前已建立 Pages project `uno-game`，手動 production deployment：
+
+```text
+https://9e9d3d9d.uno-game-8em.pages.dev
+```
+
+該 deployment 已以 `VITE_SERVER_URL=https://uno-api.konnokai.me` 建置。Pages custom domain `uno.konnokai.me` 已註冊但仍在等待 DNS CNAME 驗證；完成前該網域仍回傳既有個人網站。
 
 ### 11.2 Workers Builds
 
@@ -320,8 +328,8 @@ Vite 與 Wrangler dev 使用固定的本機 URL。前端使用 `VITE_SERVER_URL`
 正式環境網域建議：
 
 ```text
-uno.example.com -> Cloudflare Pages
-uno-api.example.com  -> Cloudflare Worker
+uno.konnokai.me -> Cloudflare Pages
+uno-api.konnokai.me  -> Cloudflare Worker
 ```
 
 `.github/workflows/ci.yml` 會執行完整 repository CI，並用 branch protection 阻止未通過 typecheck、unit test 及 build 的 commit 進入 `main`。部署本身由 Pages Git integration 與 Workers Builds 負責，不在 repository 放 Cloudflare API token。

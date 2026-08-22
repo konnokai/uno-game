@@ -40,6 +40,21 @@ describe("RoomService", () => {
     expect(service.start("host")).toMatchObject({ ok: true, room: { phase: "playing" } });
   });
 
+  it("lets only the host configure the timeout before the game starts", () => {
+    const service = new RoomService(createRoomState("ABC234", player("host", "Host", "host-hash")));
+    expect(service.join("Guest", undefined, player("guest", "Guest", "guest-hash"))).toMatchObject({ ok: true });
+    expect(service.attach("host", "host-hash")).toMatchObject({ ok: true });
+    expect(service.attach("guest", "guest-hash")).toMatchObject({ ok: true });
+    expect(service.setReady("guest", true)).toMatchObject({ ok: true });
+
+    expect(service.setTurnTimeout("guest", 45)).toMatchObject({ ok: false, error: { code: "HOST_ONLY" } });
+    expect(service.setTurnTimeout("host", 45)).toMatchObject({
+      ok: true,
+      room: { turnTimeoutSeconds: 45 },
+    });
+    expect(service.start("host")).toMatchObject({ ok: true, room: { turnTimeoutSeconds: 45 } });
+  });
+
   it("limits a room to eight players and permits host-controlled bots", () => {
     const service = new RoomService(createRoomState("ABC234", player("host", "Host", "host-hash")), {
       createId: () => "bot-1",
@@ -117,10 +132,53 @@ describe("RoomService", () => {
     });
   });
 
-  it("removes a room as soon as no connected human remains", () => {
+  it("clears the active room when the last human disconnects", () => {
     const service = startedRoom();
-    expect(service.disconnect("host")).toMatchObject({ deleted: false });
-    expect(service.disconnect("guest")).toEqual({ room: null, deleted: true });
+    const first = service.disconnect("host");
+    expect(first.deleted).toBe(false);
+    expect(first.room?.players.find((player) => player.id === "host")).toMatchObject({ isBotManaged: true });
+    const second = service.disconnect("guest");
+    expect(second).toEqual({ room: null, deleted: true });
+  });
+
+  it("clears the active room when the last human leaves", () => {
+    const service = startedRoom();
+    expect(service.leave("guest")).toMatchObject({ deleted: false });
+    expect(service.leave("host")).toEqual({ room: null, deleted: true });
+  });
+
+  it("uses a 30-second default and delegates the current seat after timeout", () => {
+    const service = startedRoom();
+    expect(service.snapshot().turnTimeoutSeconds).toBe(30);
+    const currentId = service.state.game!.players[service.state.game!.currentPlayerIndex]!.id;
+    const deadline = service.state.turnDeadlineAt;
+    expect(deadline).not.toBeNull();
+    expect(service.expireTurn(deadline! - 1)).toBe(false);
+    expect(service.expireTurn(deadline!)).toBe(true);
+    expect(service.snapshot().players.find((player) => player.id === currentId)).toMatchObject({
+      isBotManaged: true,
+    });
+    expect(service.state.turnDeadlineAt).toBeNull();
+  });
+
+  it("publishes the selected color in a draw-four challenge snapshot", () => {
+    const service = startedRoom();
+    const game = service.state.game!;
+    game.currentPlayerIndex = 1;
+    game.currentColor = "yellow";
+    game.phase = "awaiting-draw-four-challenge";
+    game.pendingDrawFour = {
+      attackerId: "host",
+      targetId: "guest",
+      wasLegal: true,
+      pendingWinnerId: null,
+    };
+
+    expect(service.gameSnapshot("guest")?.pendingDrawFour).toEqual({
+      attackerId: "host",
+      targetId: "guest",
+      chosenColor: "yellow",
+    });
   });
 
   it("transfers lobby ownership when a reserved host leaves before attach", () => {
@@ -171,12 +229,18 @@ describe("RoomService", () => {
     expect(result).toEqual({ room: null, deleted: true });
   });
 
-  it("cancels an active game when a player explicitly leaves", () => {
+  it("keeps an active game running when a player explicitly leaves", () => {
     const service = startedRoom();
 
     const result = service.leave("guest");
 
-    expect(result.room).toMatchObject({ phase: "lobby", players: [{ id: "host" }] });
-    expect(service.gameSnapshot("host")).toBeNull();
+    expect(result).toMatchObject({
+      deleted: false,
+      room: {
+        phase: "playing",
+        players: [{ id: "host" }, { id: "guest", isConnected: false, isBotManaged: true }],
+      },
+    });
+    expect(service.gameSnapshot("host")).not.toBeNull();
   });
 });

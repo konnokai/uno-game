@@ -39,6 +39,10 @@ function isCardColor(value: unknown): boolean {
   return typeof value === "string" && CARD_COLORS.some((color) => color === value);
 }
 
+function isTurnTimeoutSeconds(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
 function isActionPayload(value: unknown): value is Record<string, unknown> & ActionRequestPayload {
   return isRecord(value) && isRequestId(value.requestId);
 }
@@ -98,6 +102,7 @@ export function parseClientMessage(raw: string | ArrayBuffer):
       }
       break;
     case "room:add-bot":
+    case "room:set-turn-timeout":
     case "room:leave":
     case "game:start":
     case "game:rematch":
@@ -106,6 +111,8 @@ export function parseClientMessage(raw: string | ArrayBuffer):
     case "game:call-uno":
       case "game:catch-uno":
       if (isActionPayload(payload)) {
+        if (value.type === "room:set-turn-timeout" &&
+          !isTurnTimeoutSeconds((payload as Record<string, unknown>).seconds)) break;
         return { ok: true, message: { type: value.type, requestId, payload } } as {
           ok: true;
           message: ClientMessage;

@@ -177,16 +177,26 @@ export class RoomDurableObject extends DurableObject<Env> {
   async alarm(): Promise<void> {
     await this.exclusive(async () => {
       if (!this.service) return;
-      const versionBeforeCleanup = this.service.state.version;
+      if (this.service.state.game !== null && !this.service.hasConnectedHuman()) {
+        await this.clearRoom();
+        return;
+      }
+      const versionBeforeAlarm = this.service.state.version;
       const cleanup = this.service.cleanupReservations(Date.now(), RESERVATION_TTL_MS);
       if (cleanup.deleted) {
         await this.clearRoom();
         return;
       }
-      if (this.service.state.version !== versionBeforeCleanup) {
+      const timedOut = this.service.expireTurn(Date.now());
+      if (this.service.state.version !== versionBeforeAlarm) {
         await this.persist();
         await this.notifyLobby();
         this.broadcastRoom();
+        this.broadcastGames();
+      }
+      if (timedOut) {
+        await this.scheduleBotAlarm();
+        return;
       }
       if (!this.service.hasPendingBotAction()) {
         await this.scheduleBotAlarm();
@@ -194,6 +204,11 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       if (!this.service.performBotAction()) {
         await this.scheduleBotAlarm();
+        return;
+      }
+      if (this.service.state.game?.phase === "finished" &&
+        !this.service.state.players.some((player) => !player.isBot && player.isConnected)) {
+        await this.clearRoom();
         return;
       }
       await this.persist();
@@ -313,6 +328,13 @@ export class RoomDurableObject extends DurableObject<Env> {
 
   private async applyAction(ws: WebSocket, playerId: string, message: Exclude<ClientMessage, { type: "session:attach" }>): Promise<void> {
     const key = `${playerId}:${message.type}:${message.requestId}`;
+    if (this.service!.expireTurn(Date.now())) {
+      await this.persist();
+      await this.notifyLobby();
+      this.broadcastRoom();
+      this.broadcastGames();
+      await this.scheduleBotAlarm();
+    }
     const requests = await this.ctx.storage.get<StoredRequests>(REQUEST_KEY);
     const previous = requests?.[key];
     if (previous && previous.expiresAt > Date.now()) {
@@ -371,6 +393,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       case "room:ready": return this.service.setReady(playerId, message.payload.isReady);
       case "room:add-bot": return this.service.addBot(playerId);
       case "room:remove-bot": return this.service.removeBot(playerId, message.payload.botId);
+      case "room:set-turn-timeout": return this.service.setTurnTimeout(playerId, message.payload.seconds);
       case "game:start": return this.service.start(playerId);
       case "game:rematch": return this.service.rematch(playerId);
       case "game:bot-control": return this.service.setBotControl(playerId, message.payload.enabled);
@@ -396,6 +419,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     await this.persist();
     await this.notifyLobby();
     this.broadcastRoom();
+    this.broadcastGames();
     await this.scheduleBotAlarm();
   }
 
@@ -500,6 +524,8 @@ export class RoomDurableObject extends DurableObject<Env> {
     const alarmTimes: number[] = [];
     const reservationAt = this.service.nextReservationAt(RESERVATION_TTL_MS);
     if (reservationAt !== null) alarmTimes.push(Math.max(now + 1, reservationAt));
+    const turnDeadlineAt = this.service.nextTurnDeadlineAt();
+    if (turnDeadlineAt !== null) alarmTimes.push(Math.max(now + 1, turnDeadlineAt));
     if (this.service.hasPendingBotAction()) {
       const configuredDelay = Number(this.env.BOT_TURN_DELAY_MS ?? "650");
       const delay = Number.isFinite(configuredDelay) && configuredDelay >= 0 ? configuredDelay : 650;

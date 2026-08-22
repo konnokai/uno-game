@@ -12,6 +12,7 @@ export interface BotGameView {
   pendingDrawFour: { targetId: string } | null;
   currentPlayerId: string;
   currentColor: CardColor | null;
+  hasDrawnThisTurn: boolean;
   drawnCardId: string | null;
   topDiscard: Card;
 }
@@ -65,9 +66,13 @@ export function decideBotAction(
     return { type: "choose-color", color: chooseColor(game.hand) };
   }
 
-  if (game.drawnCardId) {
-    const drawn = game.hand.find((card) => card.id === game.drawnCardId);
-    return drawn ? playDecision(drawn, game.hand) : { type: "pass" };
+  if (game.hasDrawnThisTurn) {
+    const drawn = game.drawnCardId
+      ? game.hand.find((card) => card.id === game.drawnCardId)
+      : undefined;
+    return drawn && isCardPlayable(drawn, game.topDiscard, game.currentColor!)
+      ? playDecision(drawn, game.hand)
+      : { type: "pass" };
   }
 
   // Keep the challenge rule meaningful: a bot may select a playable +4 even

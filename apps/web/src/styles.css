@@ -204,12 +204,20 @@ input:focus { border-color: #facc15; box-shadow: 0 0 0 1px #facc15; }
 .lobby-controls p:not(.control-label):not(.form-error) { min-height: 3rem; color: #91a39a; line-height: 1.55; }
 .lobby-controls .button { width: 100%; margin-top: 1rem; }
 .lobby-controls .button + .button { margin-top: 0.65rem; }
+.timeout-setting { margin-top: 1.25rem; padding: 0.85rem; border: 1px solid #30483d; background: #07160f; }
+.timeout-setting label { display: block; color: #91a39a; font-size: 0.68rem; font-weight: 850; letter-spacing: 0.1em; }
+.timeout-input-row { display: flex; align-items: center; gap: 0.45rem; margin-top: 0.45rem; }
+.timeout-input-row input { min-height: 2.7rem; }
+.timeout-input-row > span { color: #aebdb6; font-size: 0.8rem; }
+.lobby-controls .timeout-input-row .button { width: auto; min-height: 2.7rem; margin-top: 0; padding: 0.55rem 0.8rem; }
+.timeout-setting small { display: block; margin-top: 0.55rem; color: #71877c; font-size: 0.68rem; line-height: 1.45; }
 
 .game-page, .status-page { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; }
 .game-roster { display: flex; flex-wrap: wrap; gap: 0.65rem; }
 .game-roster span { padding: 0.65rem 0.85rem; border: 1px solid #344b40; color: #c3d0ca; }
 .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 2rem; }
 .status-page .button { margin-top: 2rem; }
+.status-page .connection-status { margin-top: 1.5rem; }
 
 @media (max-width: 48rem) {
   .home-page { grid-template-columns: 1fr; gap: 3.5rem; }
@@ -309,6 +317,10 @@ input:focus { border-color: #facc15; box-shadow: 0 0 0 1px #facc15; }
 .player-order-panel header span { color: #667d72; font-size: 0.62rem; font-weight: 900; letter-spacing: 0.17em; }
 .player-order-panel header strong { margin-top: 0.3rem; font-size: 1.05rem; }
 .player-order-panel ol { margin: 0; padding: 0; list-style: none; }
+.player-order-panel,
+.player-order-panel ol { scrollbar-width: none; -ms-overflow-style: none; }
+.player-order-panel::-webkit-scrollbar,
+.player-order-panel ol::-webkit-scrollbar { display: none; }
 .player-order-panel li {
   position: relative;
   min-height: 4.3rem;
@@ -607,6 +619,9 @@ input:focus { border-color: #facc15; box-shadow: 0 0 0 1px #facc15; }
 .challenge-dialog { text-align: center; }
 .challenge-card { width: 5rem; height: 7rem; display: grid; place-items: center; margin: -4.5rem auto 1.5rem; border: 0.3rem solid #fff; border-radius: 0.6rem; background: conic-gradient(#df3028, #f7c928, #23a45c, #2275d7, #df3028); transform: rotate(5deg); }
 .challenge-card span { font-size: 2rem; font-weight: 950; text-shadow: 2px 2px 0 #111; }
+.challenge-color-note { display: inline-flex; align-items: center; gap: 0.45rem; margin: 1rem 0 0.2rem !important; padding: 0.45rem 0.7rem; border: 1px solid #53695e; background: #10271d; color: #dbe7e1 !important; }
+.challenge-color-note .color-indicator { width: 1.25rem; height: 1.25rem; border-width: 0.16rem; }
+.challenge-color-note strong { color: #fef08a; }
 .challenge-actions, .result-actions { display: flex; justify-content: center; gap: 0.65rem; margin-top: 1.5rem; }
 
 .result-backdrop { z-index: 50; background: radial-gradient(circle at 50% 25%, rgba(250,204,21,0.17), transparent 28rem), rgba(2,9,6,0.94); }
@@ -713,27 +728,45 @@ input:focus { border-color: #facc15; box-shadow: 0 0 0 1px #facc15; }
 }
 
 @media (max-width: 48rem) {
-  .game-page { width: min(100% - 1rem, 90rem); padding-top: 0.35rem; }
+  /* Mobile is a bounded table; only the player strip and hand may scroll. */
+  .game-page { width: min(100% - 1rem, 90rem); height: 100dvh; min-height: 100dvh; grid-template-rows: auto auto minmax(0, 1fr) auto; padding: 0.35rem 0 env(safe-area-inset-bottom); overflow: hidden; }
   .game-header { grid-template-columns: 1fr auto; }
   .turn-banner { grid-column: 1 / -1; grid-row: 2; width: 100%; min-width: 0; }
   .game-header > .text-button { grid-column: 2; grid-row: 1; }
-  .player-order-panel { max-height: 12rem; }
-  .player-actions-panel { margin-bottom: 5.7rem; }
-  .action-history-panel ol { max-height: 12rem; }
-  .felt-table { height: clamp(17.5rem, 55vw, 20rem); border-width: 0.4rem; border-radius: 42% / 16%; }
+  .game-main { grid-column: 1; grid-row: 3; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; min-width: 0; min-height: 0; overflow: hidden; }
+  .player-order-panel { grid-column: 1; grid-row: 2; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; max-height: none; min-height: 0; margin: 0.25rem 0 0.35rem; overflow: hidden; border-bottom: 1px solid #3b554a; }
+  .player-order-panel header { padding: 0.45rem 0.6rem; }
+  .player-order-panel header span { display: none; }
+  .player-order-panel header strong { margin: 0; font-size: 0.72rem; white-space: nowrap; }
+  .player-order-panel ol { display: flex; min-width: 0; max-height: none; overflow-x: auto; overflow-y: hidden; }
+  .player-order-panel li { min-width: 9.5rem; min-height: 3.35rem; grid-template-columns: 1.5rem minmax(0, 1fr) auto; gap: 0.4rem; padding: 0.45rem 0.6rem; border-top: 0; border-left: 1px solid #263c32; }
+  .turn-order-number { font-size: 0.62rem; }
+  .turn-order-player > strong { font-size: 0.75rem; }
+  .turn-order-player > span { margin-top: 0.12rem; font-size: 0.6rem; }
+  .turn-order-cards { font-size: 1.1rem; }
+  .player-actions-panel { display: contents; }
+  .action-history-panel { display: none; }
+  .table-shell { min-height: 0; margin-top: 0.25rem; }
+  .felt-table { height: 100%; min-height: 0; border-width: 0.35rem; border-radius: 42% / 16%; }
+  .pile-zone { gap: 1rem; }
   .table-pass-hint { bottom: 7%; left: 5%; font-size: 0.58rem; }
   .action-feed { right: 5%; bottom: 8%; left: 5%; max-width: none; }
-  .hand-section { margin-top: -1.2rem; }
-  .card-hand { justify-content: flex-start; }
+  .hand-section { width: 100%; min-width: 0; min-height: 0; margin: 0; }
+  .hand-heading { padding: 0.25rem 0.3rem 0.35rem; }
+  .hand-sort-button, .reorder-actions { display: none; }
+  .hand-scroll { width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; padding: 0.35rem 0.5rem 0.65rem; }
+  .card-hand { width: max-content; min-width: 100%; flex-wrap: nowrap; justify-content: flex-start; gap: 0; padding-left: 1rem; }
+  .card-hand .uno-card { margin-left: 0; }
   .selection-copy { display: none; }
-  .game-controls { position: fixed; z-index: 20; right: 0; bottom: 0; left: 0; min-height: 5.6rem; display: flex; justify-content: flex-end; overflow-x: auto; padding: 0.8rem max(1rem, env(safe-area-inset-right)) max(0.8rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); box-shadow: 0 -1rem 2rem rgba(0, 0, 0, 0.24); backdrop-filter: blur(12px); }
-  .game-controls .button, .game-controls .bot-control-action, .game-controls .uno-action, .game-controls .catch-action { width: auto; }
-  .game-controls > * { flex: 0 0 auto; }
+  .game-controls { grid-column: 1; grid-row: 4; position: relative; z-index: 20; display: flex; flex-wrap: wrap; align-items: stretch; gap: 0.4rem; min-height: 0; overflow: hidden; padding: 0.55rem max(0.55rem, env(safe-area-inset-right)) max(0.55rem, env(safe-area-inset-bottom)) max(0.55rem, env(safe-area-inset-left)); box-shadow: 0 -1rem 2rem rgba(0, 0, 0, 0.24); backdrop-filter: blur(12px); }
+  .game-controls > * { flex: 1 1 0; min-width: 0; }
+  .game-controls .button, .game-controls .bot-control-action, .game-controls .uno-action, .game-controls .catch-action { width: auto; min-width: 0; white-space: nowrap; }
+  .play-action { min-width: 0; }
 }
 
 @media (max-width: 36rem) {
-  .game-page { padding-bottom: 5.6rem; }
-  .pile-zone { padding-bottom: 2.5rem; }
+  .game-page { padding-bottom: env(safe-area-inset-bottom); }
+  .pile-zone { padding-bottom: 0; }
   .uno-card { width: 4.35rem; height: 6.55rem; border-width: 0.23rem; }
   .uno-card strong { font-size: 2.55rem; }
   .card-value-skip strong, .card-value-reverse strong { font-size: 2.85rem; }
@@ -742,11 +775,11 @@ input:focus { border-color: #facc15; box-shadow: 0 0 0 1px #facc15; }
   .hand-heading { padding-top: 0.4rem; }
   .hand-tools { gap: 0.4rem; }
   .hand-scroll { padding-right: 0.4rem; padding-left: 0.4rem; }
-  .card-hand .uno-card { margin-left: -1rem; }
-  .game-controls { min-height: 4.8rem; gap: 0.4rem; padding: 0.55rem; }
+  .card-hand .uno-card { margin-left: 0; }
+  .game-controls { min-height: 0; gap: 0.4rem; padding: 0.55rem; }
   .game-controls .button, .uno-action, .catch-action { min-height: 2.9rem; padding: 0.6rem 0.75rem; font-size: 0.72rem; }
   .bot-control-action { min-height: 2.9rem; padding: 0.55rem 0.65rem; font-size: 0.68rem; }
-  .play-action { min-width: 8rem; }
+  .play-action { min-width: 0; }
   .color-dialog, .challenge-dialog, .result-panel, .pause-panel { box-shadow: none; }
   .challenge-actions, .result-actions { flex-direction: column; }
   .challenge-actions .button, .result-actions .button { width: 100%; }

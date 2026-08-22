@@ -48,6 +48,7 @@ function stateWith(options: {
     currentPlayerIndex: options.currentPlayerIndex ?? 0,
     direction: options.direction ?? 1,
     phase: "playing",
+    hasDrawnThisTurn: false,
     drawnCardId: null,
     unoVulnerablePlayerId: null,
     pendingDrawFour: null,
@@ -354,7 +355,7 @@ describe("drawing and reshuffling", () => {
     }
   });
 
-  it("automatically ends the turn when the drawn card is not playable", () => {
+  it("keeps the turn until the player manually passes after a non-playable draw", () => {
     const state = stateWith({
       hands: [[card(1)], [card(2)]],
       drawPile: [card(8, "blue")],
@@ -363,8 +364,12 @@ describe("drawing and reshuffling", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.state.currentPlayerIndex).toBe(1);
-      expect(result.state.drawnCardId).toBeNull();
+      expect(result.state.currentPlayerIndex).toBe(0);
+      expect(result.state.drawnCardId).not.toBeNull();
+      expect(passAfterDraw(result.state, "p1")).toMatchObject({
+        ok: true,
+        state: { currentPlayerIndex: 1, drawnCardId: null },
+      });
     }
   });
 
@@ -382,6 +387,24 @@ describe("drawing and reshuffling", () => {
       expect(result.state.players[0]!.hand).toContainEqual(oldOne);
       expect(result.state.drawPile).toEqual([oldTwo]);
       expect(result.state.lastAction.shuffle).toBe("recycle");
+    }
+  });
+
+  it("still lets a player pass when the exhausted pile has no card to draw", () => {
+    const state = stateWith({
+      hands: [[card(1)], [card(2)]],
+      drawPile: [],
+    });
+    const drawn = drawCard(state, "p1");
+
+    expect(drawn.ok).toBe(true);
+    if (drawn.ok) {
+      expect(drawn.state.hasDrawnThisTurn).toBe(true);
+      expect(drawn.state.drawnCardId).toBeNull();
+      expect(passAfterDraw(drawn.state, "p1")).toMatchObject({
+        ok: true,
+        state: { currentPlayerIndex: 1 },
+      });
     }
   });
 });

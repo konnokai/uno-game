@@ -150,6 +150,7 @@ function drawCards(
 
 function completeTurn(state: GameState, fromIndex: number, steps = 1): void {
   state.unoVulnerablePlayerId = null;
+  state.hasDrawnThisTurn = false;
   state.drawnCardId = null;
   state.currentPlayerIndex = nextPlayerIndex(state, fromIndex, steps);
 }
@@ -266,6 +267,7 @@ export function startGame(
     currentPlayerIndex: 0,
     direction: 1,
     phase: "playing",
+    hasDrawnThisTurn: false,
     drawnCardId: null,
     unoVulnerablePlayerId: null,
     pendingDrawFour: null,
@@ -337,7 +339,7 @@ export function playCard(
   if (cardIndex < 0) {
     return rejected(state, "CARD_NOT_IN_HAND", "The player does not own this card");
   }
-  if (state.drawnCardId !== null && state.drawnCardId !== cardId) {
+  if (state.hasDrawnThisTurn && state.drawnCardId !== cardId) {
     return rejected(
       state,
       "MUST_PLAY_DRAWN_CARD",
@@ -380,6 +382,7 @@ export function playCard(
   );
   next.discardPile.push(playedCard);
   next.currentColor = options.chosenColor ?? playedCard.color;
+  next.hasDrawnThisTurn = false;
   next.drawnCardId = null;
   next.unoVulnerablePlayerId =
     nextPlayer.hand.length === 1 && !options.declareUno ? playerId : null;
@@ -447,7 +450,7 @@ export function drawCard(
   if (turnError) {
     return turnError;
   }
-  if (state.drawnCardId !== null) {
+  if (state.hasDrawnThisTurn) {
     return rejected(state, "ALREADY_DREW", "The player already drew this turn");
   }
 
@@ -461,12 +464,11 @@ export function drawCard(
     ...(drawResult.reshuffled ? { shuffle: "recycle" as const } : {}),
   };
 
-  if (!drawn || !isCardPlayable(drawn, topDiscard(next), next.currentColor!)) {
-    completeTurn(next, next.currentPlayerIndex);
-  } else {
-    next.drawnCardId = drawn.id;
-    next.unoVulnerablePlayerId = null;
-  }
+  // Keep the turn after every draw so opponents cannot infer whether the
+  // player had a matching card from an automatic pass.
+  next.hasDrawnThisTurn = true;
+  next.drawnCardId = drawn?.id ?? null;
+  next.unoVulnerablePlayerId = null;
 
   return accepted(next);
 }
@@ -476,8 +478,8 @@ export function passAfterDraw(state: GameState, playerId: string): RuleResult {
   if (turnError) {
     return turnError;
   }
-  if (state.drawnCardId === null) {
-    return rejected(state, "NO_DRAWN_CARD", "There is no playable drawn card to pass");
+  if (!state.hasDrawnThisTurn) {
+    return rejected(state, "NO_DRAWN_CARD", "請先抽牌，才能結束這個回合");
   }
 
   const next = cloneState(state);
@@ -600,6 +602,7 @@ export function resolveDrawFour(
 
   next.phase = "playing";
   next.pendingDrawFour = null;
+  next.hasDrawnThisTurn = false;
   next.drawnCardId = null;
   next.unoVulnerablePlayerId = null;
   next.lastAction = {

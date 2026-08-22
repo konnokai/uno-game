@@ -71,13 +71,15 @@ Cloudflare Pages 的設定：
 - Production branch：`main`
 - `NODE_VERSION=22.12.0`
 - `PNPM_VERSION=10.15.0`
-- Production `VITE_SERVER_URL=https://uno-api.example.com`
+- Production `VITE_SERVER_URL=https://uno-api.konnokai.me`
+
+目前手動 production deployment：`https://9e9d3d9d.uno-game-8em.pages.dev`。Pages custom domain `uno.konnokai.me` 已建立，DNS 請新增 `uno CNAME uno-game-8em.pages.dev`；驗證完成後該網域才會切換到 UNO。
 
 Worker 的 `ALLOWED_ORIGINS` 必須包含 Pages production 網域及需要使用的 preview 網域。正式環境建議使用：
 
 ```text
-uno.example.com      -> Cloudflare Pages
-uno-api.example.com  -> Cloudflare Worker
+uno.konnokai.me      -> Cloudflare Pages
+uno-api.konnokai.me  -> Cloudflare Worker
 ```
 
 Pages 與 Workers Builds 都使用 GitHub integration，不在 repository 保存 Cloudflare API token。
