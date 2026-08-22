@@ -1,4 +1,4 @@
-import { useEffect, useState, type DragEvent, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from "react";
 import {
   isCardPlayable,
   type Card,
@@ -12,6 +12,7 @@ import {
 } from "@uno/shared";
 import { Navigate, useParams } from "react-router-dom";
 import { socket } from "./socket";
+import { playGameSound, unlockGameAudio, type GameSound } from "./sound-effects";
 
 interface GamePageProps {
   connected: boolean;
@@ -199,6 +200,33 @@ function actionMessage(game: GameSnapshot, room: RoomSnapshot): string {
   return actionText(game.lastAction, room, game.topDiscard);
 }
 
+function actionSoundKey(game: GameSnapshot): string {
+  const action = game.lastAction;
+  return [
+    game.version,
+    action.type,
+    action.playerId,
+    action.cardId,
+    action.targetPlayerId,
+    action.amount,
+    action.declaredUno,
+  ].join(":");
+}
+
+function soundsForAction(game: GameSnapshot): GameSound[] {
+  const action = game.lastAction;
+  switch (action.type) {
+    case "play-card":
+      return [
+        game.topDiscard.value === "wild-draw-four" ? "wild-draw-four" : "play-card",
+        ...(action.declaredUno ? ["uno" as const] : []),
+      ];
+    case "draw-card": return ["draw-card"];
+    case "call-uno": return ["uno"];
+    default: return [];
+  }
+}
+
 function ColorDialog({
   hand,
   mode,
@@ -277,6 +305,17 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
     | null
   >(null);
   const [now, setNow] = useState(() => Date.now());
+  const audioState = useRef<{ key: string; phase: GameSnapshot["phase"] } | null>(null);
+
+  useEffect(() => {
+    const unlock = () => unlockGameAudio();
+    window.addEventListener("pointerdown", unlock);
+    window.addEventListener("keydown", unlock);
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, []);
 
   useEffect(() => {
     if (selectedCardId && !game?.hand.some((card) => card.id === selectedCardId)) {
@@ -342,6 +381,23 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
 
     const timeout = window.setTimeout(() => setTableEffect(null), 1_800);
     return () => window.clearTimeout(timeout);
+  }, [game]);
+
+  useEffect(() => {
+    if (!game) {
+      audioState.current = null;
+      return;
+    }
+
+    const key = actionSoundKey(game);
+    const previous = audioState.current;
+    audioState.current = { key, phase: game.phase };
+    if (!previous || previous.key === key) return;
+
+    for (const sound of soundsForAction(game)) playGameSound(sound);
+    if (previous.phase !== "finished" && game.phase === "finished") {
+      window.setTimeout(() => playGameSound("victory"), 240);
+    }
   }, [game]);
 
   if (!session || session.roomCode !== roomCode) return <Navigate replace to={`/?room=${roomCode}`} />;

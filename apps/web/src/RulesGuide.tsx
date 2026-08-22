@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { MAX_GAME_PLAYERS, MIN_GAME_PLAYERS } from "@uno/shared";
+import { previewGameSound, type GameSound } from "./sound-effects";
 
 const CARD_RULES = [
   { color: "red", kind: "number", symbol: "7", name: "數字牌", description: "可接在相同顏色或相同數字的牌上，沒有額外效果。" },
@@ -9,6 +10,14 @@ const CARD_RULES = [
   { color: "wild", kind: "wild", symbol: "", name: "萬用牌", description: "任何時候都能打出，並由出牌者指定接下來的顏色。" },
   { color: "wild", kind: "draw-four", symbol: "+4", name: "萬用抽四", description: "只有手上沒有目前顏色的牌時才能合法打出；指定顏色後，由下一位玩家決定接受或質疑。" },
 ] as const;
+
+const SOUND_PREVIEWS: Array<{ sound: GameSound; label: string }> = [
+  { sound: "play-card", label: "出牌" },
+  { sound: "draw-card", label: "抽牌" },
+  { sound: "uno", label: "喊 UNO" },
+  { sound: "wild-draw-four", label: "+4" },
+  { sound: "victory", label: "勝利" },
+];
 
 export function RulesGuide() {
   const [open, setOpen] = useState(false);
@@ -67,6 +76,26 @@ export function RulesGuide() {
             </nav>
 
             <div className="rules-content">
+              <section className="sound-preview" id="rules-sounds">
+                <div>
+                  <p className="eyebrow">SOUND PREVIEW</p>
+                  <h3>合成音效試聽</h3>
+                  <p className="sound-preview-copy">點擊下方按鈕逐一試聽目前版本。遊戲內所有音效都使用合成版本。</p>
+                  <div className="sound-preview-grid">
+                    {SOUND_PREVIEWS.map(({ sound, label }) => (
+                      <button
+                        className="sound-preview-button"
+                        key={sound}
+                        onClick={() => previewGameSound(sound)}
+                        type="button"
+                      >
+                        <span aria-hidden="true">▶</span>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </section>
               <section id="rules-basic">
                 <span className="rules-number">01</span>
                 <div>
