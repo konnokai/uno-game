@@ -27,6 +27,7 @@ import {
 } from "react-router-dom";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { GamePage } from "./GameTable";
+import { applyPageMetadata, getPageMetadata } from "./metadata";
 import { RulesGuide } from "./RulesGuide";
 import { createRoom as createRoomRequest, joinRoom as joinRoomRequest, listRooms, socket } from "./socket";
 
@@ -429,6 +430,10 @@ export function App() {
   const [connected, setConnected] = useState(socket.connected);
   const [needsRestore, setNeedsRestore] = useState(false);
   const restoring = useRef<string | null>(null);
+
+  useEffect(() => {
+    applyPageMetadata(getPageMetadata(new URL(window.location.href)));
+  }, [location.pathname, location.search]);
 
   function updateRoom(nextRoom: RoomSnapshot) {
     setRoom((current) =>
