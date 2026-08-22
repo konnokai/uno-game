@@ -34,7 +34,7 @@ function replaceMetaContent(html: string, attribute: string, key: string, value:
   return html.replace(selector, `$1${escapeHtml(value)}$2`);
 }
 
-/** Rewrites the static homepage metadata so social crawlers receive invitation copy before React runs. */
+/** Rewrites static page metadata so social crawlers receive invitation copy before React runs. */
 export async function onRequest({ request, next }: PagesContext): Promise<Response> {
   const response = await next();
   if (request.method !== "GET" || !response.ok || !response.headers.get("content-type")?.includes("text/html")) {

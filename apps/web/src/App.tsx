@@ -488,6 +488,7 @@ export function App() {
         setRoom(null);
         setGame(null);
         setNeedsRestore(false);
+        navigate("/", { replace: true });
       }
     }
 

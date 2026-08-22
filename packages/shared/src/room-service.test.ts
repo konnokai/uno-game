@@ -193,6 +193,28 @@ describe("RoomService", () => {
     expect(result.room?.hostId).toBe("guest");
   });
 
+  it("keeps a disconnected lobby seat available for refresh reconnects", () => {
+    let now = 1_000;
+    const service = new RoomService(
+      createRoomState("ABC234", player("host", "Host", "host-hash")),
+      { now: () => now },
+    );
+    expect(service.attach("host", "host-hash")).toMatchObject({ ok: true });
+
+    now = 2_000;
+    const disconnected = service.disconnect("host");
+
+    expect(disconnected).toMatchObject({
+      deleted: false,
+      room: { players: [{ id: "host", isConnected: false }] },
+    });
+    expect(service.attach("host", "host-hash")).toMatchObject({
+      ok: true,
+      playerId: "host",
+      reconnected: true,
+    });
+  });
+
   it("removes a player who disconnects after the game is finished", () => {
     const service = new RoomService(
       createRoomState("ABC234", player("host", "Host", "host-hash")),

@@ -356,6 +356,18 @@ export class RoomService {
     const player = this.room.players.find((candidate) => candidate.id === playerId);
     if (!player) return { room: null, deleted: false };
 
+    if (this.room.game === null && !player.isBot) {
+      if (!player.isConnected && player.reservedAt !== undefined) {
+        return { room: this.snapshot(), deleted: false };
+      }
+      // Keep a lobby seat briefly so a page refresh can reattach with its token.
+      player.isConnected = false;
+      player.isBotManaged = false;
+      player.reservedAt = this.now();
+      this.room.version += 1;
+      return { room: this.snapshot(), deleted: false };
+    }
+
     if (this.room.game?.phase !== "finished" && this.room.game !== null && !player.isBot) {
       if (!player.isConnected && player.isBotManaged) {
         return { room: this.snapshot(), deleted: false };
@@ -425,7 +437,7 @@ export class RoomService {
     );
   }
 
-  /** Removes HTTP seats that never completed WebSocket attach. */
+  /** Removes lobby seats that never completed or lost WebSocket attach. */
   cleanupReservations(now: number, ttlMs: number): DisconnectResult {
     if (this.room.game !== null) return { room: this.snapshot(), deleted: false };
     const originalCount = this.room.players.length;

@@ -136,8 +136,9 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return new Response("Expected WebSocket", { status: 426 });
     }
-    if (!this.service) return new Response("Room not found", { status: 404 });
 
+    // Let the attach message carry a typed ROOM_NOT_FOUND response instead of
+    // hiding the error behind a failed WebSocket handshake.
     const pair = new WebSocketPair();
     const client = pair[0]!;
     const server = pair[1]!;

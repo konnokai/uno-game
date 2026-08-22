@@ -7,17 +7,22 @@ export interface PageMetadata {
 }
 
 const ROOM_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{6}$/u;
+const LOBBY_ROOM_PATH_PATTERN = /^\/lobby\/([A-HJ-NP-Z2-9]{6})\/?$/u;
 const DEFAULT_TITLE = "UNO｜即時多人卡牌遊戲";
 const DEFAULT_DESCRIPTION = "免註冊，輸入暱稱即可加入，和 2–8 位玩家即時遊玩經典 UNO。";
 const IMAGE_ALT = "UNO 即時多人卡牌遊戲";
 
-/** Builds share metadata from the current URL, including invitation copy for valid room links. */
+/** Builds share metadata from query or lobby invitation URLs before React runs. */
 export function getPageMetadata(url: URL): PageMetadata {
-  const roomCode = url.searchParams.get("room")?.trim().toUpperCase();
-  const invitationRoomCode = roomCode && ROOM_CODE_PATTERN.test(roomCode) ? roomCode : null;
+  const pathRoomCode = url.pathname.match(LOBBY_ROOM_PATH_PATTERN)?.[1];
+  const queryRoomCode = url.searchParams.get("room")?.trim().toUpperCase();
+  const invitationRoomCode = [pathRoomCode, queryRoomCode]
+    .find((roomCode) => roomCode !== undefined && ROOM_CODE_PATTERN.test(roomCode)) ?? null;
   const shareUrl = new URL(url.origin + url.pathname);
 
-  if (invitationRoomCode) shareUrl.searchParams.set("room", invitationRoomCode);
+  if (invitationRoomCode && pathRoomCode !== invitationRoomCode) {
+    shareUrl.searchParams.set("room", invitationRoomCode);
+  }
 
   return {
     title: invitationRoomCode ? `房主邀請你遊玩 UNO｜房號 ${invitationRoomCode}` : DEFAULT_TITLE,
@@ -25,7 +30,7 @@ export function getPageMetadata(url: URL): PageMetadata {
       ? `加入房間 ${invitationRoomCode}，和朋友一起遊玩即時多人 UNO。輸入暱稱即可開始。`
       : DEFAULT_DESCRIPTION,
     url: shareUrl.href,
-    image: new URL("/og-image.svg", url.origin).href,
+    image: new URL("/og-image.png", url.origin).href,
     imageAlt: IMAGE_ALT,
   };
 }
