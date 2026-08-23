@@ -350,11 +350,13 @@ function ColorDialog({
 
 function TargetDialog({
   players,
+  gamePlayers,
   currentPlayerId,
   onChoose,
   onClose,
 }: {
   players: RoomSnapshot["players"];
+  gamePlayers: GameSnapshot["players"];
   currentPlayerId: string;
   onChoose: (playerId: string) => void;
   onClose: () => void;
@@ -366,12 +368,15 @@ function TargetDialog({
         <h3 id="target-title">選擇交換手牌的玩家</h3>
         <p>出 7 後，你會和指定玩家交換手上的全部牌。</p>
         <div className="target-options">
-          {players.filter((player) => player.id !== currentPlayerId).map((player) => (
-            <button className="button secondary" key={player.id} onClick={() => onChoose(player.id)} type="button">
-              <strong>{player.nickname}</strong>
-              <small>{player.isBot ? "機器人" : "玩家"}</small>
-            </button>
-          ))}
+          {players.filter((player) => player.id !== currentPlayerId).map((player) => {
+            const handCount = gamePlayers.find((candidate) => candidate.id === player.id)?.handCount ?? 0;
+            return (
+              <button className="button secondary" key={player.id} onClick={() => onChoose(player.id)} type="button">
+                <strong>{player.nickname}</strong>
+                <small>{player.isBot ? "機器人" : "玩家"} · 剩餘 {handCount} 張牌</small>
+              </button>
+            );
+          })}
         </div>
         <button className="text-button" onClick={onClose} type="button">返回手牌</button>
       </section>
@@ -1205,6 +1210,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
       {choosingTarget && selectedCard?.value === 7 && (
         <TargetDialog
           currentPlayerId={session.playerId}
+          gamePlayers={game.players}
           onChoose={chooseTarget}
           onClose={() => setChoosingTarget(false)}
           players={room.players}
