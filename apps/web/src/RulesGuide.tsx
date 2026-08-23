@@ -6,7 +6,7 @@ const CARD_RULES = [
   { color: "red", kind: "number", symbol: "7", name: "數字牌", description: "經典模式沒有額外效果；台灣模式出 7 可和指定玩家交換手牌，出 0 則全員依方向傳牌。" },
   { color: "yellow", kind: "skip", symbol: "⊘", name: "跳過", description: "下一位玩家跳過一個回合。" },
   { color: "green", kind: "reverse", symbol: "↻", name: "反轉", description: "改變出牌方向；兩人遊戲中等同跳過，出牌者再進行一回合。" },
-  { color: "blue", kind: "draw-two", symbol: "+2", name: "抽二", description: "經典模式由下一位玩家抽兩張牌並跳過；台灣模式的疊牌方式與同回合多張連出由大廳細項設定決定。" },
+  { color: "blue", kind: "draw-two", symbol: "+2", name: "抽二", description: "經典模式由下一位玩家逐張點牌庫抽兩張，之後跳過；台灣模式的疊牌方式與同回合多張連出由大廳細項設定決定。" },
   { color: "wild", kind: "wild", symbol: "", name: "萬用牌", description: "任何時候都能打出，並由出牌者指定接下來的顏色。" },
   { color: "wild", kind: "draw-four", symbol: "+4", name: "萬用抽四", description: "只有手上沒有目前顏色的牌時才能合法打出；指定顏色後，由下一位玩家接受、質疑，或依大廳細項設定疊牌。" },
 ] as const;
@@ -80,7 +80,7 @@ export function RulesGuide() {
                 <div>
                   <p className="eyebrow">SOUND PREVIEW</p>
                   <h3>合成音效試聽</h3>
-                  <p className="sound-preview-copy">按下面的按鈕試聽音效。遊戲內播放的也是這些合成音效。</p>
+                  <p className="sound-preview-copy">按下面的按鈕試聽音效。抽牌與出牌使用合成的紙牌摩擦聲。</p>
                   <div className="sound-preview-grid">
                     {SOUND_PREVIEWS.map(({ sound, label }) => (
                       <button
@@ -103,7 +103,7 @@ export function RulesGuide() {
                   <ul>
                     <li>每局支援 {MIN_GAME_PLAYERS}–{MAX_GAME_PLAYERS} 位玩家，每人起手七張牌。</li>
                     <li>輪到你時，可以打出和棄牌堆最上方的牌有相同顏色、數字或符號的牌；萬用牌不受此限制。</li>
-                    <li>經典模式一次抽一張牌；抽到的牌如果可以出，可以直接打出，也可以保留並結束回合。台灣模式會持續抽牌，直到抽到可出的牌；抽到後同樣可以打出，也可以保留並結束回合。</li>
+                    <li>每次點擊牌庫只抽一張。經典模式抽一張後可出牌或保留；台灣模式若開啟「抽到能出」，要逐張點牌庫，直到抽到可出的牌，再選擇出牌或保留。</li>
                     <li>第一位出完所有手牌的玩家獲勝，一局定勝負。</li>
                     <li>台灣模式的 +4 質疑與同回合多張連出可在大廳開關，實際規則以房間設定為準。</li>
                     <li>抽牌堆耗盡時，保留目前棄牌，將其餘棄牌洗回抽牌堆。</li>
@@ -141,7 +141,7 @@ export function RulesGuide() {
                   <h3>UNO、質疑與起始牌</h3>
                   <ul>
                     <li>打出倒數第二張牌、手上只剩一張時，必須喊 UNO。</li>
-                    <li>如果沒喊 UNO，其他玩家可在下一位玩家完成動作前抓到漏喊的人；被抓到的人罰抽兩張。</li>
+                    <li>如果沒喊 UNO，其他玩家可在下一位玩家完成動作前抓到漏喊的人；被抓到的人要逐張點牌庫抽兩張，完成後恢復原本回合。</li>
                     <li>第一張翻開的牌如果是跳過、反轉或抽二，效果會立即生效。萬用牌由起始玩家看過自己的手牌後選色；萬用抽四則洗回牌庫，再重新翻牌。</li>
                   </ul>
                   <article className="challenge-explainer">
@@ -156,17 +156,17 @@ export function RulesGuide() {
                       <section>
                         <span>質疑成功</span>
                         <strong>A 出牌前手上有紅牌</strong>
-                        <p>A 罰抽四張；B 不用抽牌，繼續自己的回合。</p>
+                        <p>A 要逐張點牌庫抽四張；完成後由 B 繼續自己的回合。</p>
                       </section>
                       <section>
                         <span>質疑失敗</span>
                         <strong>A 出牌前手上沒有紅牌</strong>
-                        <p>B 因質疑失敗要抽六張，並失去回合。</p>
+                        <p>B 因質疑失敗要逐張點牌庫抽六張，完成後失去回合。</p>
                       </section>
                       <section>
                         <span>不提出質疑</span>
                         <strong>直接接受抽四</strong>
-                        <p>B 抽四張，並失去回合。</p>
+                        <p>B 要逐張點牌庫抽四張，完成後失去回合。</p>
                       </section>
                     </div>
                     <p className="challenge-privacy">實體牌局會由出牌者展示手牌，讓質疑者確認。本遊戲由伺服器私下驗證，只公布結果，不公開完整手牌。</p>

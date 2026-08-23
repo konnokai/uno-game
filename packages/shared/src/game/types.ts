@@ -84,6 +84,16 @@ export interface PendingDrawFour {
   pendingWinnerId: string | null;
 }
 
+/** A draw penalty paused while a caught UNO player draws their own penalty. */
+export interface QueuedDrawPenalty {
+  playerId: string;
+  amount: number;
+  type: PendingDrawType | null;
+  resumePlayerId: string;
+  pendingWinnerId: string | null;
+  phase: "playing" | "awaiting-draw-four-challenge";
+}
+
 export type GameActionType =
   | "start"
   | "choose-color"
@@ -123,6 +133,9 @@ export interface GameState {
   drawnCardId: string | null;
   pendingDrawAmount: number;
   pendingDrawType: PendingDrawType | null;
+  pendingDrawResumePlayerId: string | null;
+  pendingWinnerId: string | null;
+  queuedDrawPenalty: QueuedDrawPenalty | null;
   unoVulnerablePlayerId: string | null;
   pendingDrawFour: PendingDrawFour | null;
   winnerId: string | null;

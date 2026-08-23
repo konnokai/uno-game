@@ -18,6 +18,7 @@ function gameWithBot(hand: Card[], overrides: Partial<BotGameView> = {}): BotGam
     rulesOptions: { ...DEFAULT_GAME_RULE_OPTIONS },
     hasDrawnThisTurn: false,
     drawnCardId: null,
+    mustContinueDrawing: false,
     pendingDrawFour: null,
     pendingDrawAmount: 0,
     pendingDrawType: null,
@@ -75,6 +76,19 @@ describe("bot player", () => {
     expect(decideBotAction(gameWithBot([
       card("drawn-blue", "blue", 2),
     ], { hasDrawnThisTurn: true, drawnCardId: "drawn-blue" }), "bot")).toEqual({ type: "pass" });
+  });
+
+  it("continues drawing one card at a time in draw-to-match mode", () => {
+    expect(decideBotAction(gameWithBot([
+      card("original-red", "red", 2),
+      card("drawn-blue", "blue", 2),
+    ], {
+      rulesMode: "taiwan",
+      rulesOptions: { ...DEFAULT_GAME_RULE_OPTIONS, drawToMatchEnabled: true },
+      hasDrawnThisTurn: true,
+      drawnCardId: null,
+      mustContinueDrawing: true,
+    }), "bot")).toEqual({ type: "draw" });
   });
 
   it("chooses a color for an initial wild", () => {

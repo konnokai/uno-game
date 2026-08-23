@@ -33,32 +33,41 @@ function tone(
   oscillator.stop(start + duration + 0.02);
 }
 
+/** Shapes white noise into a short paper-like scrape instead of an electronic tone. */
 function noise(
   context: AudioContext,
   start: number,
   duration: number,
   volume: number,
   frequency: number,
+  filterType: BiquadFilterType,
 ): void {
   const frameCount = Math.max(1, Math.floor(context.sampleRate * duration));
   const buffer = context.createBuffer(1, frameCount, context.sampleRate);
   const data = buffer.getChannelData(0);
   for (let index = 0; index < frameCount; index += 1) {
-    const fade = 1 - index / frameCount;
-    data[index] = (Math.random() * 2 - 1) * fade * fade;
+    data[index] = Math.random() * 2 - 1;
   }
 
   const source = context.createBufferSource();
   const filter = context.createBiquadFilter();
   const gain = context.createGain();
-  filter.type = "lowpass";
+  filter.type = filterType;
   filter.frequency.setValueAtTime(frequency, start);
-  gain.gain.setValueAtTime(volume, start);
+  filter.Q.setValueAtTime(0.7, start);
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(volume, start + Math.min(0.018, duration / 4));
   gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
   source.buffer = buffer;
   source.connect(filter).connect(gain).connect(context.destination);
   source.start(start);
   source.stop(start + duration);
+}
+
+/** Layers a dry high scrape with a softer low rustle to resemble a card sliding on felt. */
+function cardFriction(context: AudioContext, start: number, duration: number, volume: number): void {
+  noise(context, start, duration, volume, 3_600, "bandpass");
+  noise(context, start + 0.018, duration * 0.82, volume * 0.48, 1_250, "lowpass");
 }
 
 function playSynthesizedSound(sound: GameSound): void {
@@ -68,19 +77,13 @@ function playSynthesizedSound(sound: GameSound): void {
 
   switch (sound) {
     case "play-card":
-      noise(context, start, 0.06, 0.12, 1_500);
-      tone(context, 180, start, 0.09, 0.08, "triangle", 110);
-      tone(context, 520, start + 0.015, 0.045, 0.025, "sine", 360);
+      cardFriction(context, start, 0.13, 0.12);
       return;
     case "draw-card":
-      noise(context, start, 0.12, 0.08, 2_400);
-      tone(context, 280, start, 0.1, 0.055, "triangle", 190);
-      tone(context, 420, start + 0.06, 0.08, 0.035, "sine", 300);
+      cardFriction(context, start, 0.19, 0.1);
       return;
     case "wild-draw-four":
-      noise(context, start, 0.14, 0.14, 900);
-      tone(context, 120, start, 0.24, 0.12, "sawtooth", 65);
-      tone(context, 440, start + 0.04, 0.22, 0.07, "square", 880);
+      cardFriction(context, start, 0.2, 0.14);
       return;
     case "uno":
       tone(context, 523.25, start, 0.12, 0.08, "triangle");

@@ -59,6 +59,9 @@ function stateWith(options: {
     drawnCardId: null,
     pendingDrawAmount: 0,
     pendingDrawType: null,
+    pendingDrawResumePlayerId: null,
+    pendingWinnerId: null,
+    queuedDrawPenalty: null,
     unoVulnerablePlayerId: null,
     pendingDrawFour: null,
     winnerId: null,
@@ -83,6 +86,20 @@ function expectAccepted(result: ReturnType<typeof playCard>): GameState {
     throw new Error(result.error.code);
   }
   return result.state;
+}
+
+function drawPenaltyOneCardAtATime(state: GameState, playerId: string, amount: number): GameState {
+  let next = state;
+  for (let remaining = amount - 1; remaining >= 0; remaining -= 1) {
+    const handCount = next.players.find((player) => player.id === playerId)!.hand.length;
+    const result = drawCard(next, playerId);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error.code);
+    next = result.state;
+    expect(next.players.find((player) => player.id === playerId)!.hand).toHaveLength(handCount + 1);
+    expect(next.pendingDrawAmount).toBe(remaining);
+  }
+  return next;
 }
 
 describe("starting a game", () => {
@@ -125,7 +142,7 @@ describe("starting a game", () => {
     },
   );
 
-  it("makes the first player draw two and skips their turn", () => {
+  it("makes the first player click twice to draw two, then skips their turn", () => {
     const hands = [[card(1)], [card(2, "blue")]];
     const state = startGame(["p1", "p2"], {
       deck: deckForStart(hands, card("draw-two", "red"), [
@@ -135,9 +152,25 @@ describe("starting a game", () => {
       handSize: 1,
     });
 
-    expect(state.players[0]!.hand).toHaveLength(3);
-    expect(state.currentPlayerIndex).toBe(1);
+    expect(state.players[0]!.hand).toHaveLength(1);
+    expect(state.currentPlayerIndex).toBe(0);
+    expect(state.pendingDrawAmount).toBe(2);
     expect(state.lastAction.amount).toBe(2);
+
+    const firstDraw = drawCard(state, "p1");
+    expect(firstDraw).toMatchObject({
+      ok: true,
+      state: { currentPlayerIndex: 0, pendingDrawAmount: 1 },
+    });
+    if (!firstDraw.ok) return;
+    expect(firstDraw.state.players[0]!.hand).toHaveLength(2);
+
+    const secondDraw = drawCard(firstDraw.state, "p1");
+    expect(secondDraw).toMatchObject({
+      ok: true,
+      state: { currentPlayerIndex: 1, pendingDrawAmount: 0 },
+    });
+    if (secondDraw.ok) expect(secondDraw.state.players[0]!.hand).toHaveLength(3);
   });
 
   it("requires the first player to choose the color of a starting wild", () => {
@@ -301,7 +334,7 @@ describe("turn order and effects", () => {
     expect(next.currentPlayerIndex).toBe(0);
   });
 
-  it("makes the next player draw two and skips them", () => {
+  it("makes the next player draw two one card at a time and skips them", () => {
     const drawTwo = card("draw-two", "red");
     const state = stateWith({
       hands: [[drawTwo, card(1)], [card(2)], [card(3)]],
@@ -309,8 +342,11 @@ describe("turn order and effects", () => {
     });
     const next = expectAccepted(playCard(state, "p1", drawTwo.id, { random: () => 0 }));
 
-    expect(next.players[1]!.hand).toHaveLength(3);
-    expect(next.currentPlayerIndex).toBe(2);
+    expect(next.players[1]!.hand).toHaveLength(1);
+    expect(next.currentPlayerIndex).toBe(1);
+    const completed = drawPenaltyOneCardAtATime(next, "p2", 2);
+    expect(completed.players[1]!.hand).toHaveLength(3);
+    expect(completed.currentPlayerIndex).toBe(2);
   });
 
   it("still applies an action card's effect when it is the winning card", () => {
@@ -321,9 +357,12 @@ describe("turn order and effects", () => {
     });
     const next = expectAccepted(playCard(state, "p1", drawTwo.id));
 
-    expect(next.phase).toBe("finished");
-    expect(next.winnerId).toBe("p1");
-    expect(next.players[1]!.hand).toHaveLength(3);
+    expect(next.phase).toBe("playing");
+    expect(next.pendingWinnerId).toBe("p1");
+    const completed = drawPenaltyOneCardAtATime(next, "p2", 2);
+    expect(completed.phase).toBe("finished");
+    expect(completed.winnerId).toBe("p1");
+    expect(completed.players[1]!.hand).toHaveLength(3);
   });
 
   it("stacks matching draw-two cards in Taiwan mode", () => {
@@ -343,12 +382,9 @@ describe("turn order and effects", () => {
     expect(twiceStacked.pendingDrawAmount).toBe(4);
     expect(twiceStacked.currentPlayerIndex).toBe(2);
 
-    const drawn = drawCard(twiceStacked, "p3");
-    expect(drawn).toMatchObject({
-      ok: true,
-      state: { pendingDrawAmount: 0, currentPlayerIndex: 0 },
-    });
-    if (drawn.ok) expect(drawn.state.players[2]!.hand).toHaveLength(5);
+    const drawn = drawPenaltyOneCardAtATime(twiceStacked, "p3", 4);
+    expect(drawn.currentPlayerIndex).toBe(0);
+    expect(drawn.players[2]!.hand).toHaveLength(5);
   });
 
   it("applies each Taiwan stacking mode to +2 and +4 combinations", () => {
@@ -680,7 +716,7 @@ describe("turn order and effects", () => {
     const second = card("wild-draw-four", null);
     const state = stateWith({
       rulesMode: "taiwan",
-      hands: [[first], [second], [card(3)]],
+      hands: [[first], [second, card(4, "green")], [card(3)]],
       drawPile: Array.from({ length: 10 }, (_, index) => card(index, "green")),
     });
 
@@ -690,8 +726,33 @@ describe("turn order and effects", () => {
     expect(secondPending.pendingDrawFour?.attackerId).toBe("p2");
 
     const accepted = resolveDrawFour(secondPending, "p3", false);
-    expect(accepted).toMatchObject({ ok: true, state: { currentPlayerIndex: 0, pendingDrawAmount: 0 } });
-    if (accepted.ok) expect(accepted.state.players[2]!.hand).toHaveLength(9);
+    expect(accepted).toMatchObject({ ok: true, state: { currentPlayerIndex: 2, pendingDrawAmount: 8 } });
+    if (!accepted.ok) return;
+    const drawn = drawPenaltyOneCardAtATime(accepted.state, "p3", 8);
+    expect(drawn.currentPlayerIndex).toBe(0);
+    expect(drawn.players[2]!.hand).toHaveLength(9);
+    expect(drawn.phase).toBe("finished");
+    expect(drawn.winnerId).toBe("p1");
+  });
+
+  it("keeps an earlier winner when a later stacked draw four is challenged", () => {
+    const first = card("wild-draw-four", null);
+    const second = card("wild-draw-four", null);
+    const state = stateWith({
+      rulesMode: "taiwan",
+      hands: [[first], [second, card(4, "blue")], [card(3)]],
+      drawPile: Array.from({ length: 10 }, (_, index) => card(index, "green")),
+    });
+
+    const firstPending = expectAccepted(playCard(state, "p1", first.id, { chosenColor: "blue" }));
+    const secondPending = expectAccepted(playCard(firstPending, "p2", second.id, { chosenColor: "yellow" }));
+    const challenged = resolveDrawFour(secondPending, "p3", true);
+    if (!challenged.ok) throw new Error(challenged.error.code);
+    expect(challenged.state.lastAction.successful).toBe(true);
+
+    const drawn = drawPenaltyOneCardAtATime(challenged.state, "p2", 8);
+    expect(drawn.phase).toBe("finished");
+    expect(drawn.winnerId).toBe("p1");
   });
 });
 
@@ -718,18 +779,37 @@ describe("drawing and reshuffling", () => {
     expect(played.currentPlayerIndex).toBe(1);
   });
 
-  it("draws until a playable card appears in Taiwan mode", () => {
+  it("requires one click per card until a playable card appears in Taiwan mode", () => {
     const playable = card(7, "red");
+    const originalPlayable = card(1, "red");
     const state = stateWith({
       rulesMode: "taiwan",
-      hands: [[card(1, "green")], [card(2, "blue")]],
+      hands: [[originalPlayable], [card(2, "blue")]],
       drawPile: [playable, card(8, "blue")],
     });
 
-    const drawn = drawCard(state, "p1");
+    const first = drawCard(state, "p1");
+    expect(first).toMatchObject({
+      ok: true,
+      state: { currentPlayerIndex: 0, drawnCardId: null, hasDrawnThisTurn: true },
+    });
+    if (!first.ok) return;
+    expect(first.state.players[0]!.hand).toHaveLength(2);
+    expect(playCard(first.state, "p1", originalPlayable.id)).toMatchObject({
+      ok: false,
+      error: { code: "MUST_PLAY_DRAWN_CARD" },
+    });
+    expect(passAfterDraw(first.state, "p1")).toMatchObject({
+      ok: false,
+      error: { code: "NO_DRAWN_CARD" },
+    });
 
-    expect(drawn).toMatchObject({ ok: true, state: { currentPlayerIndex: 0, drawnCardId: playable.id } });
-    if (drawn.ok) expect(drawn.state.players[0]!.hand).toHaveLength(3);
+    const second = drawCard(first.state, "p1");
+    expect(second).toMatchObject({
+      ok: true,
+      state: { currentPlayerIndex: 0, drawnCardId: playable.id, hasDrawnThisTurn: true },
+    });
+    if (second.ok) expect(second.state.players[0]!.hand).toHaveLength(3);
   });
 
   it("draws only one card when draw-to-match is disabled", () => {
@@ -850,11 +930,38 @@ describe("UNO", () => {
     const caught = catchUno(vulnerable, "p2");
 
     expect(caught.ok).toBe(true);
-    if (caught.ok) {
-      expect(caught.state.players[0]!.hand).toHaveLength(3);
-      expect(caught.state.unoVulnerablePlayerId).toBeNull();
-      expect(caught.state.lastAction.targetPlayerId).toBe("p1");
-    }
+    if (!caught.ok) return;
+    expect(caught.state.players[0]!.hand).toHaveLength(1);
+    expect(caught.state.currentPlayerIndex).toBe(0);
+    expect(caught.state.pendingDrawAmount).toBe(2);
+    expect(caught.state.unoVulnerablePlayerId).toBeNull();
+    expect(caught.state.lastAction.targetPlayerId).toBe("p1");
+    const completed = drawPenaltyOneCardAtATime(caught.state, "p1", 2);
+    expect(completed.players[0]!.hand).toHaveLength(3);
+    expect(completed.currentPlayerIndex).toBe(1);
+  });
+
+  it("resumes an interrupted draw penalty after the caught player draws twice", () => {
+    const drawTwo = card("draw-two", "red");
+    const state = stateWith({
+      hands: [[drawTwo, card(1)], [card(2)], [card(3)]],
+      drawPile: [card(4), card(5), card(6), card(7)],
+    });
+    const vulnerable = expectAccepted(playCard(state, "p1", drawTwo.id));
+    const caught = catchUno(vulnerable, "p3");
+    if (!caught.ok) throw new Error(caught.error.code);
+
+    const firstUnoDraw = drawCard(caught.state, "p1");
+    if (!firstUnoDraw.ok) throw new Error(firstUnoDraw.error.code);
+    expect(firstUnoDraw.state.pendingDrawAmount).toBe(1);
+    const secondUnoDraw = drawCard(firstUnoDraw.state, "p1");
+    if (!secondUnoDraw.ok) throw new Error(secondUnoDraw.error.code);
+    const unoPenaltyComplete = secondUnoDraw.state;
+    expect(unoPenaltyComplete.currentPlayerIndex).toBe(1);
+    expect(unoPenaltyComplete.pendingDrawAmount).toBe(2);
+
+    const drawTwoPenaltyComplete = drawPenaltyOneCardAtATime(unoPenaltyComplete, "p2", 2);
+    expect(drawTwoPenaltyComplete.currentPlayerIndex).toBe(2);
   });
 
   it("closes the catch window when the next player completes an action", () => {
@@ -920,10 +1027,12 @@ describe("wild draw four challenges", () => {
     expect(pending.currentColor).toBe("blue");
     const resolved = resolveDrawFour(pending, "p2", false);
     expect(resolved.ok).toBe(true);
-    if (resolved.ok) {
-      expect(resolved.state.players[1]!.hand).toHaveLength(5);
-      expect(resolved.state.currentPlayerIndex).toBe(2);
-    }
+    if (!resolved.ok) return;
+    expect(resolved.state.players[1]!.hand).toHaveLength(1);
+    expect(resolved.state.currentPlayerIndex).toBe(1);
+    const completed = drawPenaltyOneCardAtATime(resolved.state, "p2", 4);
+    expect(completed.players[1]!.hand).toHaveLength(5);
+    expect(completed.currentPlayerIndex).toBe(2);
   });
 
   it("makes the attacker draw four after a successful challenge", () => {
@@ -939,12 +1048,14 @@ describe("wild draw four challenges", () => {
     const resolved = resolveDrawFour(pending, "p2", true);
 
     expect(resolved.ok).toBe(true);
-    if (resolved.ok) {
-      expect(resolved.state.lastAction.successful).toBe(true);
-      expect(resolved.state.players[0]!.hand).toHaveLength(5);
-      expect(resolved.state.players[1]!.hand).toHaveLength(1);
-      expect(resolved.state.currentPlayerIndex).toBe(1);
-    }
+    if (!resolved.ok) return;
+    expect(resolved.state.lastAction.successful).toBe(true);
+    expect(resolved.state.players[0]!.hand).toHaveLength(1);
+    expect(resolved.state.currentPlayerIndex).toBe(0);
+    const completed = drawPenaltyOneCardAtATime(resolved.state, "p1", 4);
+    expect(completed.players[0]!.hand).toHaveLength(5);
+    expect(completed.players[1]!.hand).toHaveLength(1);
+    expect(completed.currentPlayerIndex).toBe(1);
   });
 
   it("makes the target draw six after a failed challenge", () => {
@@ -959,11 +1070,13 @@ describe("wild draw four challenges", () => {
     const resolved = resolveDrawFour(pending, "p2", true);
 
     expect(resolved.ok).toBe(true);
-    if (resolved.ok) {
-      expect(resolved.state.lastAction.successful).toBe(false);
-      expect(resolved.state.players[1]!.hand).toHaveLength(7);
-      expect(resolved.state.currentPlayerIndex).toBe(2);
-    }
+    if (!resolved.ok) return;
+    expect(resolved.state.lastAction.successful).toBe(false);
+    expect(resolved.state.players[1]!.hand).toHaveLength(1);
+    expect(resolved.state.currentPlayerIndex).toBe(1);
+    const completed = drawPenaltyOneCardAtATime(resolved.state, "p2", 6);
+    expect(completed.players[1]!.hand).toHaveLength(7);
+    expect(completed.currentPlayerIndex).toBe(2);
   });
 
   it("rejects a challenge when the +4 challenge option is disabled", () => {
@@ -982,7 +1095,7 @@ describe("wild draw four challenges", () => {
     expect(pending.phase).toBe("awaiting-draw-four-challenge");
   });
 
-  it("defers victory until a final draw four challenge is resolved", () => {
+  it("defers victory until the final draw-four penalty is drawn", () => {
     const legalDrawFour = card("wild-draw-four", null);
     const legalState = stateWith({
       hands: [[legalDrawFour], [card(3)]],
@@ -996,10 +1109,12 @@ describe("wild draw four challenges", () => {
 
     const failedChallenge = resolveDrawFour(pendingLegal, "p2", true);
     expect(failedChallenge.ok).toBe(true);
-    if (failedChallenge.ok) {
-      expect(failedChallenge.state.phase).toBe("finished");
-      expect(failedChallenge.state.winnerId).toBe("p1");
-    }
+    if (!failedChallenge.ok) return;
+    expect(failedChallenge.state.phase).toBe("playing");
+    expect(failedChallenge.state.pendingWinnerId).toBe("p1");
+    const completed = drawPenaltyOneCardAtATime(failedChallenge.state, "p2", 6);
+    expect(completed.phase).toBe("finished");
+    expect(completed.winnerId).toBe("p1");
   });
 });
 

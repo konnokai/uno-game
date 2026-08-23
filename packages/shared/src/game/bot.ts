@@ -20,6 +20,7 @@ export interface BotGameView {
   currentColor: CardColor | null;
   hasDrawnThisTurn: boolean;
   drawnCardId: string | null;
+  mustContinueDrawing: boolean;
   topDiscard: Card;
   targetPlayerId?: string;
 }
@@ -87,6 +88,7 @@ export function decideBotAction(
     return { type: "choose-color", color: chooseColor(game.hand) };
   }
 
+  if (game.mustContinueDrawing) return { type: "draw" };
   if (game.hasDrawnThisTurn) {
     const drawn = game.drawnCardId
       ? game.hand.find((card) => card.id === game.drawnCardId)

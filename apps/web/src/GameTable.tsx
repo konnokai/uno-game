@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent } from "react";
 import {
   isCardPlayable,
   isDrawCardStackable,
@@ -67,6 +67,19 @@ const CARD_SYMBOLS: Record<string, string> = {
   "wild-draw-four": "+4",
 };
 
+interface CardMotion {
+  key: string;
+  type: "play" | "draw";
+  card: Card | null;
+  fromLeft: number;
+  fromTop: number;
+  toLeft: number;
+  toTop: number;
+  width: number;
+  height: number;
+  tilt: number;
+}
+
 function cardLabel(card: Card): string {
   const value = typeof card.value === "number" ? String(card.value) : VALUE_LABELS[card.value];
   return `${card.color ? COLOR_LABELS[card.color] : "萬用"} ${value}`;
@@ -87,6 +100,47 @@ function compareCards(left: Card, right: Card): number {
   return leftValue - rightValue;
 }
 
+/** Places the local player at the bottom and distributes every seat around the table edge. */
+function tableSeatPosition(index: number, selfIndex: number, count: number): CSSProperties {
+  const relativeIndex = (index - selfIndex + count) % count;
+  const angle = Math.PI / 2 + relativeIndex * Math.PI * 2 / count;
+  return {
+    left: `${50 + Math.cos(angle) * 37}%`,
+    top: `${50 + Math.sin(angle) * 38}%`,
+  };
+}
+
+function visibleRect(element: HTMLElement | null | undefined): DOMRect | null {
+  if (!element) return null;
+  const rect = element.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0 ? rect : null;
+}
+
+/** Centers one card-sized overlay on the measured source and destination elements. */
+function createCardMotion(
+  key: string,
+  type: CardMotion["type"],
+  source: DOMRect,
+  target: DOMRect,
+  card: Card | null,
+): CardMotion {
+  const size = type === "play" ? target : source;
+  const fromCenter = { x: source.left + source.width / 2, y: source.top + source.height / 2 };
+  const toCenter = { x: target.left + target.width / 2, y: target.top + target.height / 2 };
+  return {
+    key,
+    type,
+    card,
+    fromLeft: fromCenter.x - size.width / 2,
+    fromTop: fromCenter.y - size.height / 2,
+    toLeft: toCenter.x - size.width / 2,
+    toTop: toCenter.y - size.height / 2,
+    width: size.width,
+    height: size.height,
+    tilt: fromCenter.x <= toCenter.x ? 7 : -7,
+  };
+}
+
 function UnoCard({
   card,
   disabled = false,
@@ -100,6 +154,7 @@ function UnoCard({
   onDragStart,
   onDrop,
   onDoubleClick,
+  elementRef,
 }: {
   card: Card;
   disabled?: boolean;
@@ -113,6 +168,7 @@ function UnoCard({
   onDragStart?: (event: DragEvent<HTMLButtonElement>) => void;
   onDrop?: (event: DragEvent<HTMLButtonElement>) => void;
   onDoubleClick?: () => void;
+  elementRef?: (element: HTMLElement | null) => void;
 }) {
   const value = typeof card.value === "number" ? String(card.value) : VALUE_LABELS[card.value];
   const symbol = typeof card.value === "number" ? String(card.value) : CARD_SYMBOLS[card.value];
@@ -137,7 +193,7 @@ function UnoCard({
 
   if (!onClick) {
     return (
-      <div aria-label={cardLabel(card)} className={className} role="img">
+      <div aria-label={cardLabel(card)} className={className} ref={elementRef} role="img">
         <span aria-hidden="true" className="card-corner">{cornerSymbol}</span>
         {centerSymbol}
         <span aria-hidden="true" className="card-corner card-corner-bottom">{cornerSymbol}</span>
@@ -158,6 +214,7 @@ function UnoCard({
       onDrop={onDrop}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
+      ref={elementRef}
       type="button"
     >
       <span aria-hidden="true" className="card-corner">{cornerSymbol}</span>
@@ -167,9 +224,9 @@ function UnoCard({
   );
 }
 
-function CardBack({ count, label = "牌庫" }: { count?: number; label?: string }) {
+function CardBack({ count, label = "牌庫", elementRef }: { count?: number; label?: string; elementRef?: (element: HTMLElement | null) => void }) {
   return (
-    <div aria-label={label} className="uno-card card-back" role="img">
+    <div aria-label={label} className="uno-card card-back" ref={elementRef} role="img">
       <strong>UNO</strong>
       {count !== undefined && <span className="pile-count">{count}</span>}
     </div>
@@ -193,11 +250,11 @@ function actionText(action: GameAction, room: RoomSnapshot, card?: Card): string
     case "pass": return `${actor} 保留新牌並結束回合`;
     case "call-uno": return `${actor} 喊了 UNO！`;
     case "catch-uno": return `${actor} 抓到 ${target} 漏喊 UNO，罰抽 ${amount} 張`;
-    case "accept-draw-four": return `${actor} 接受抽四，抽了 ${amount} 張`;
+    case "accept-draw-four": return `${actor} 接受抽四，需逐張抽 ${amount} 張`;
     case "challenge-draw-four":
       return action.successful
-        ? `${actor} 質疑成功，出牌者罰抽 ${amount} 張`
-        : `${actor} 質疑失敗，罰抽 ${amount} 張`;
+        ? `${actor} 質疑成功，出牌者需逐張抽 ${amount} 張`
+        : `${actor} 質疑失敗，需逐張抽 ${amount} 張`;
   }
 }
 
@@ -342,8 +399,32 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
     | { type: "catch"; playerId: string | null; targetPlayerId: string | null; amount: number; version: number }
     | null
   >(null);
+  const [cardMotion, setCardMotion] = useState<CardMotion | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const audioState = useRef<{ key: string; phase: GameSnapshot["phase"] } | null>(null);
+  const motionGameState = useRef<GameSnapshot | null>(null);
+  const motionTimeout = useRef<number | null>(null);
+  const pendingPlayOrigin = useRef<{ cardId: string; rect: DOMRect } | null>(null);
+  const drawPileCard = useRef<HTMLElement | null>(null);
+  const discardPileCard = useRef<HTMLElement | null>(null);
+  const handArea = useRef<HTMLElement | null>(null);
+  const handCards = useRef(new Map<string, HTMLElement>());
+  const playerTargets = useRef(new Map<string, HTMLElement>());
+
+  function setPlayerTarget(kind: "order" | "seat", playerId: string, element: HTMLElement | null): void {
+    const key = `${kind}:${playerId}`;
+    if (element) playerTargets.current.set(key, element);
+    else playerTargets.current.delete(key);
+  }
+
+  function playerTargetRect(playerId: string): DOMRect | null {
+    if (playerId === session?.playerId) {
+      const handRect = visibleRect(handArea.current);
+      if (handRect) return handRect;
+    }
+    return visibleRect(playerTargets.current.get(`seat:${playerId}`)) ??
+      visibleRect(playerTargets.current.get(`order:${playerId}`));
+  }
 
   useEffect(() => {
     const unlock = () => unlockGameAudio();
@@ -379,6 +460,53 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
         : next;
     });
   }, [game]);
+
+  useEffect(() => () => {
+    if (motionTimeout.current !== null) window.clearTimeout(motionTimeout.current);
+  }, []);
+
+  useEffect(() => {
+    if (!game) {
+      motionGameState.current = null;
+      setCardMotion(null);
+      return;
+    }
+
+    const previous = motionGameState.current;
+    motionGameState.current = game;
+    if (!previous || previous.version >= game.version) return;
+
+    const action = game.lastAction;
+    let nextMotion: CardMotion | null = null;
+    if (action.type === "play-card" && action.playerId) {
+      const localOrigin = pendingPlayOrigin.current;
+      const source = action.playerId === session?.playerId && localOrigin !== null && localOrigin.cardId === action.cardId
+        ? localOrigin.rect
+        : playerTargetRect(action.playerId);
+      const target = visibleRect(discardPileCard.current);
+      if (source && target) {
+        nextMotion = createCardMotion(`${game.version}:play`, "play", source, target, game.topDiscard);
+      }
+      if (action.playerId === session?.playerId) pendingPlayOrigin.current = null;
+    } else if (action.type === "draw-card" && action.playerId && (action.amount ?? 0) > 0) {
+      const source = visibleRect(drawPileCard.current);
+      const previousIds = new Set(previous.hand.map((card) => card.id));
+      const newCard = action.playerId === session?.playerId
+        ? game.hand.find((card) => !previousIds.has(card.id))
+        : undefined;
+      const target = newCard
+        ? visibleRect(handCards.current.get(newCard.id)) ?? playerTargetRect(action.playerId)
+        : playerTargetRect(action.playerId);
+      if (source && target) {
+        nextMotion = createCardMotion(`${game.version}:draw`, "draw", source, target, null);
+      }
+    }
+
+    if (!nextMotion) return;
+    if (motionTimeout.current !== null) window.clearTimeout(motionTimeout.current);
+    setCardMotion(nextMotion);
+    motionTimeout.current = window.setTimeout(() => setCardMotion(null), 620);
+  }, [game, session?.playerId]);
 
   useEffect(() => {
     if (game?.turnDeadlineAt === null || game?.turnDeadlineAt === undefined) return;
@@ -454,6 +582,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
     );
   }
   const me = room.players.find((player) => player.id === session.playerId);
+  const selfPlayerIndex = Math.max(0, room.players.findIndex((player) => player.id === session.playerId));
   const gameMe = game.players.find((player) => player.id === session.playerId);
   const selectedCard = game.hand.find((card) => card.id === selectedCardId) ?? null;
   const selectedCards = selectedCardIds
@@ -506,8 +635,11 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
   const selectedPlayValid = selectedCards.length > 1 ? selectedBatchPlayable : selectedCardPlayable;
   const draggingCard = game.hand.find((card) => card.id === draggingCardId) ?? null;
   const draggingCardPlayable = draggingCard !== null && isPlayableNow(draggingCard);
-  const canDraw = isPlayingTurn && !game.hasDrawnThisTurn;
-  const canPass = isPlayingTurn && game.hasDrawnThisTurn;
+  const mustContinueDrawing = isTaiwanRules && game.rulesOptions.drawToMatchEnabled &&
+    game.hasDrawnThisTurn && game.drawnCardId === null && game.lastAction.type === "draw-card" &&
+    (game.lastAction.amount ?? 0) > 0;
+  const canDraw = isPlayingTurn && (!game.hasDrawnThisTurn || mustContinueDrawing);
+  const canPass = isPlayingTurn && game.hasDrawnThisTurn && !mustContinueDrawing;
   const canCallUno = !paused && !isBotManaged && game.unoVulnerablePlayerId === session.playerId;
   const canCatchUno = !paused && !isBotManaged && game.unoVulnerablePlayerId !== null && !canCallUno;
   const shouldChooseStartingColor = !paused && !isBotManaged && game.currentColor === null && isMyTurn && game.phase === "playing";
@@ -544,6 +676,8 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
     targetPlayerId?: string,
     additionalCardIds?: readonly string[],
   ) {
+    const origin = visibleRect(handCards.current.get(card.id));
+    if (origin) pendingPlayOrigin.current = { cardId: card.id, rect: origin };
     run(
       (done) => socket.emit("game:play-card", {
         cardId: card.id,
@@ -571,7 +705,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
     } else if (card.color === null) {
       setChoosingColor(true);
     } else {
-      submitCard(card, undefined, declareUno && selectedCardId === card.id);
+      submitCard(card, undefined, declareUno);
     }
   }
 
@@ -606,15 +740,14 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
     setSelectedCardId(card.id);
     setSelectedCardIds([card.id]);
     if (card.value === "wild-draw-four") setChoosingColor(true);
-    else submitCard(card, undefined, declareUno && selectedCardId === card.id);
+    else submitCard(card, undefined, declareUno);
   }
 
-  function selectCard(card: Card, detail: number) {
+  function selectCard(card: Card) {
     if (!multiSelectEnabled || !isMultiCardValue(card.value)) {
       const isSameCard = card.id === selectedCardId;
       setSelectedCardId(isSameCard ? null : card.id);
       setSelectedCardIds(isSameCard ? [] : [card.id]);
-      if (detail === 1 && !isSameCard) setDeclareUno(false);
       return;
     }
 
@@ -623,7 +756,6 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
       const nextIds = selectedCardIds.filter((cardId) => cardId !== card.id);
       setSelectedCardIds(nextIds);
       setSelectedCardId(nextIds[0] ?? null);
-      setDeclareUno(false);
       return;
     }
 
@@ -631,13 +763,11 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
     if (firstSelected && (firstSelected.value !== card.value || !isMultiCardValue(firstSelected.value))) {
       setSelectedCardIds([card.id]);
       setSelectedCardId(card.id);
-      setDeclareUno(false);
       return;
     }
     const nextIds = [...selectedCardIds, card.id];
     setSelectedCardIds(nextIds);
     setSelectedCardId(nextIds[0] ?? card.id);
-    if (detail === 1) setDeclareUno(false);
   }
 
   function normalizedOrder(current: string[]): string[] {
@@ -727,6 +857,25 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
         </div>
       )}
 
+      {cardMotion && (
+        <div
+          aria-hidden="true"
+          className={`card-motion is-${cardMotion.type}`}
+          key={cardMotion.key}
+          style={{
+            "--motion-from-left": `${cardMotion.fromLeft}px`,
+            "--motion-from-top": `${cardMotion.fromTop}px`,
+            "--motion-to-left": `${cardMotion.toLeft}px`,
+            "--motion-to-top": `${cardMotion.toTop}px`,
+            "--motion-width": `${cardMotion.width}px`,
+            "--motion-height": `${cardMotion.height}px`,
+            "--motion-tilt": `${cardMotion.tilt}deg`,
+          } as CSSProperties}
+        >
+          {cardMotion.card ? <UnoCard card={cardMotion.card} /> : <CardBack label="抽出的牌" />}
+        </div>
+      )}
+
       <aside aria-label="玩家出牌順序" className="player-order-panel">
         <header>
           <span>TURN ORDER</span>
@@ -741,6 +890,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
                 aria-current={active ? "step" : undefined}
                 className={`${active ? "is-active" : ""} ${player.id === session.playerId ? "is-me" : ""} ${!player.isConnected && !player.isBotManaged ? "is-offline" : ""} ${player.isBotManaged ? "is-managed" : ""}`}
                 key={player.id}
+                ref={(element) => setPlayerTarget("order", player.id, element)}
               >
                 <span className="turn-order-number">{String(index + 1).padStart(2, "0")}</span>
                 <div className="turn-order-player">
@@ -792,6 +942,28 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
           }}
         >
           <div className="table-ring" />
+          <ol aria-label="牌桌座位" className="desktop-player-seats">
+            {room.players.map((player, index) => {
+              const publicPlayer = game.players.find((candidate) => candidate.id === player.id);
+              const active = game.currentPlayerId === player.id;
+              return (
+                <li
+                  aria-current={active ? "step" : undefined}
+                  className={`${active ? "is-active" : ""} ${player.id === session.playerId ? "is-me" : ""} ${!player.isConnected && !player.isBotManaged ? "is-offline" : ""}`}
+                  key={player.id}
+                  ref={(element) => setPlayerTarget("seat", player.id, element)}
+                  style={tableSeatPosition(index, selfPlayerIndex, room.players.length)}
+                >
+                  <span className="table-seat-number">{String(index + 1).padStart(2, "0")}</span>
+                  <span className="table-seat-player">
+                    <strong>{player.nickname}</strong>
+                    <small>{active ? "目前回合" : player.isBotManaged ? "機器人代管" : !player.isConnected ? "連線中斷" : player.id === session.playerId ? "你的座位" : "等待中"}</small>
+                  </span>
+                  <strong className="table-seat-cards">{publicPlayer?.handCount ?? 0}<small>張</small></strong>
+                </li>
+              );
+            })}
+          </ol>
           {draggingCardPlayable && (
             <div className="table-drop-hint">{tableDragActive ? "放開即可出牌" : "把牌拖到牌桌上出牌"}</div>
           )}
@@ -803,11 +975,11 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
               onClick={() => run((done) => socket.emit("game:draw-card", { requestId: requestId() }, done))}
               type="button"
             >
-              <CardBack count={game.drawPileCount} />
+              <CardBack count={game.drawPileCount} elementRef={(element) => { drawPileCard.current = element; }} />
               <span>抽牌</span>
             </button>
             <div className="discard-pile">
-              <UnoCard card={game.topDiscard} />
+              <UnoCard card={game.topDiscard} elementRef={(element) => { discardPileCard.current = element; }} />
               <span>棄牌堆</span>
             </div>
           </div>
@@ -839,7 +1011,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
           </div>
         </div>
         <div className="hand-scroll">
-          <div className="card-hand">
+          <div className="card-hand" ref={(element) => { handArea.current = element; }}>
             {orderedHand.map((card) => {
               return (
                 <UnoCard
@@ -847,8 +1019,12 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
                   disabled={busy}
                   draggable={!busy}
                   dragging={draggingCardId === card.id}
+                  elementRef={(element) => {
+                    if (element) handCards.current.set(card.id, element);
+                    else handCards.current.delete(card.id);
+                  }}
                   key={card.id}
-                  onClick={(event) => selectCard(card, event.detail)}
+                  onClick={() => selectCard(card)}
                   onDragEnd={() => {
                     setDraggingCardId(null);
                     setTableDragActive(false);
@@ -879,11 +1055,14 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
       </div>
 
       <aside className="player-actions-panel">
-      <section aria-label="玩家行動紀錄" className="action-history-panel">
-        <header>
-          <span>ACTION LOG</span>
-          <strong>玩家操作紀錄</strong>
-        </header>
+      <details aria-label="玩家行動紀錄" className="action-history-panel" open>
+        <summary>
+          <span className="action-history-title">
+            <span>ACTION LOG</span>
+            <strong>玩家操作紀錄</strong>
+          </span>
+          <span aria-hidden="true" className="action-history-toggle" />
+        </summary>
         <ol aria-live="polite">
           {[...game.actionHistory].reverse().map((entry) => (
             <li key={entry.version}>
@@ -892,7 +1071,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
             </li>
           ))}
         </ol>
-      </section>
+      </details>
 
       <nav aria-label="遊戲操作" className="game-controls">
         <div className="selection-copy">
@@ -958,7 +1137,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
          )}
          {canDraw && (
            <button className="button secondary" disabled={busy} onClick={() => run((done) => socket.emit("game:draw-card", { requestId: requestId() }, done))} type="button">
-              {game.pendingDrawAmount > 0 ? `抽 ${game.pendingDrawAmount} 張並跳過` : isTaiwanRules && game.rulesOptions.drawToMatchEnabled ? "抽到能出為止" : "抽一張牌"}
+              {game.pendingDrawAmount > 0 ? `抽一張（還需 ${game.pendingDrawAmount} 張）` : isTaiwanRules && game.rulesOptions.drawToMatchEnabled ? "抽一張（直到能出）" : "抽一張牌"}
            </button>
          )}
          <button className="button primary play-action" disabled={!selectedPlayValid || busy || paused} onClick={playSelected} type="button">
@@ -999,12 +1178,12 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
             )}
             <p>{game.rulesOptions.drawFourChallengeEnabled
               ? game.pendingDrawAmount > 4
-                ? `目前累積抽 ${game.pendingDrawAmount} 張。`
+                ? `目前累積需抽 ${game.pendingDrawAmount} 張。`
                 : "若對方出牌前手上有目前顏色的牌，質疑成功，對方抽四張；否則你要抽六張。"
               : "目前未開啟 +4 質疑，你要抽完累積張數並跳過回合。"}</p>
             <div className="challenge-actions">
               {canStackDrawCard && <button className="button secondary" disabled={busy} onClick={stackDrawCard} type="button">疊出 {stackableDrawCard?.value === "wild-draw-four" ? "+4" : "+2"}</button>}
-              <button className="button secondary" disabled={busy} onClick={() => run((done) => socket.emit("game:challenge-draw-four", { challenge: false, requestId: requestId() }, done))} type="button">{`接受並抽 ${game.pendingDrawAmount} 張`}</button>
+              <button className="button secondary" disabled={busy} onClick={() => run((done) => socket.emit("game:challenge-draw-four", { challenge: false, requestId: requestId() }, done))} type="button">{`接受，逐張抽 ${game.pendingDrawAmount} 張`}</button>
               {game.rulesOptions.drawFourChallengeEnabled && <button className="button primary" disabled={busy} onClick={() => run((done) => socket.emit("game:challenge-draw-four", { challenge: true, requestId: requestId() }, done))} type="button">提出質疑</button>}
             </div>
           </section>

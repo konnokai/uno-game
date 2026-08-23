@@ -111,6 +111,9 @@ function botGameView(game: GameState, botId: string): BotGameView {
     drawnCardId: game.drawnCardId && bot.hand.some((card) => card.id === game.drawnCardId)
       ? game.drawnCardId
       : null,
+    mustContinueDrawing: game.rulesMode === "taiwan" && game.rulesOptions.drawToMatchEnabled &&
+      game.hasDrawnThisTurn && game.drawnCardId === null && game.lastAction.type === "draw-card" &&
+      (game.lastAction.amount ?? 0) > 0,
     topDiscard,
     targetPlayerId: game.players.find((player) => player.id !== botId)?.id,
   };
@@ -683,8 +686,13 @@ export class RoomService {
 
   private acceptRoomGameResult(result: RuleResult): GameActionResponse {
     if (!result.ok) return { ok: false, error: result.error };
+    const previousCurrentPlayerId = this.room.game?.players[this.room.game.currentPlayerIndex]?.id;
     this.room.game = result.state;
-    this.updateTurnDeadlineAfterAction(this.room.game.lastAction.type);
+    const currentPlayerId = this.room.game.players[this.room.game.currentPlayerIndex]?.id;
+    this.updateTurnDeadlineAfterAction(
+      this.room.game.lastAction.type,
+      previousCurrentPlayerId !== currentPlayerId,
+    );
     this.room.actionHistory.push(this.historyEntry(this.room.game));
     this.room.actionHistory = this.room.actionHistory.slice(-40);
     if (this.room.game.phase === "finished") {
@@ -776,12 +784,15 @@ export class RoomService {
       : null;
   }
 
-  private updateTurnDeadlineAfterAction(actionType: GameState["lastAction"]["type"]): void {
+  private updateTurnDeadlineAfterAction(
+    actionType: GameState["lastAction"]["type"],
+    currentPlayerChanged: boolean,
+  ): void {
     if (!this.room.game || this.room.game.phase === "finished") {
       this.room.turnDeadlineAt = null;
       return;
     }
-    if (actionType === "play-card" || actionType === "pass" ||
+    if (currentPlayerChanged || actionType === "play-card" || actionType === "pass" ||
       actionType === "accept-draw-four" || actionType === "challenge-draw-four") {
       this.resetTurnDeadline();
     } else {
