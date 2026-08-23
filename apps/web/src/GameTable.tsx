@@ -839,7 +839,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
           <div>
             <small>
               {turnRemainingSeconds === null ? "未啟動倒數" : `剩餘 ${turnRemainingSeconds} 秒`}
-              {` · ${game.direction === 1 ? "往下 ↓" : "往上 ↑"} · 目前顏色`}
+              {` · ${game.direction === 1 ? "順時針" : "逆時針"} · 目前顏色`}
             </small>
             <strong>{isMyTurn && isBotManaged ? "機器人正在代管" : isMyTurn ? "輪到你了" : canJumpIn ? "可以搶牌" : `等待 ${playerName(room, game.currentPlayerId)}`}</strong>
           </div>
