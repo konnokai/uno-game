@@ -387,6 +387,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
   const [choosingTarget, setChoosingTarget] = useState(false);
   const [declareUno, setDeclareUno] = useState(false);
   const [handOrder, setHandOrder] = useState<string[]>([]);
+  const [automaticSorting, setAutomaticSorting] = useState(true);
   const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
   const [tableDragActive, setTableDragActive] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -449,9 +450,16 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
 
   useEffect(() => {
     if (!game) return;
-    const handIds = game.hand.map((card) => card.id);
+    const handIds = automaticSorting
+      ? [...game.hand].sort(compareCards).map((card) => card.id)
+      : game.hand.map((card) => card.id);
     const handIdSet = new Set(handIds);
     setHandOrder((current) => {
+      if (automaticSorting) {
+        return handIds.length === current.length && handIds.every((cardId, index) => cardId === current[index])
+          ? current
+          : handIds;
+      }
       const retained = current.filter((cardId) => handIdSet.has(cardId));
       const retainedSet = new Set(retained);
       const next = [...retained, ...handIds.filter((cardId) => !retainedSet.has(cardId))];
@@ -459,7 +467,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
         ? current
         : next;
     });
-  }, [game]);
+  }, [automaticSorting, game]);
 
   useEffect(() => () => {
     if (motionTimeout.current !== null) window.clearTimeout(motionTimeout.current);
@@ -590,13 +598,15 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
     .filter((card): card is Card => card !== undefined);
   const handById = new Map(game.hand.map((card) => [card.id, card]));
   const orderedIdSet = new Set(handOrder);
-  const orderedHand = [
-    ...handOrder.flatMap((cardId) => {
-      const orderedCard = handById.get(cardId);
-      return orderedCard ? [orderedCard] : [];
-    }),
-    ...game.hand.filter((card) => !orderedIdSet.has(card.id)),
-  ];
+  const orderedHand = automaticSorting
+    ? [...game.hand].sort(compareCards)
+    : [
+        ...handOrder.flatMap((cardId) => {
+          const orderedCard = handById.get(cardId);
+          return orderedCard ? [orderedCard] : [];
+        }),
+        ...game.hand.filter((card) => !orderedIdSet.has(card.id)),
+      ];
   const paused = !connected;
   const isBotManaged = me?.isBotManaged ?? false;
   const isMyTurn = game.currentPlayerId === session.playerId;
@@ -779,7 +789,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
   }
 
   function moveCard(cardId: string, targetCardId: string) {
-    if (cardId === targetCardId) return;
+    if (automaticSorting || cardId === targetCardId) return;
     setHandOrder((current) => {
       const next = normalizedOrder(current);
       const sourceIndex = next.indexOf(cardId);
@@ -796,10 +806,6 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
     const selectedIndex = orderedHand.findIndex((card) => card.id === selectedCardId);
     const target = orderedHand[selectedIndex + offset];
     if (target) moveCard(selectedCardId, target.id);
-  }
-
-  function sortHand() {
-    setHandOrder([...game!.hand].sort(compareCards).map((card) => card.id));
   }
 
   function chooseStartingColor(color: CardColor) {
@@ -1005,8 +1011,14 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
           </div>
           <div className="hand-tools">
             <p>{gameMe?.handCount ?? game.hand.length} 張牌</p>
-            <button className="hand-sort-button" disabled={busy} onClick={sortHand} type="button">
-              自動整理
+            <button
+              aria-pressed={automaticSorting}
+              className="hand-sort-button"
+              disabled={busy}
+              onClick={() => setAutomaticSorting((enabled) => !enabled)}
+              type="button"
+            >
+              {automaticSorting ? "自動整理" : "手動整理"}
             </button>
           </div>
         </div>
@@ -1017,7 +1029,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
                 <UnoCard
                   card={card}
                   disabled={busy}
-                  draggable={!busy}
+                  draggable={!busy && !automaticSorting}
                   dragging={draggingCardId === card.id}
                   elementRef={(element) => {
                     if (element) handCards.current.set(card.id, element);
@@ -1089,7 +1101,7 @@ export function GamePage({ connected, room, game, session, error, onError, onLea
             {isBotManaged ? "取回控制" : "機器人代管"}
           </button>
         )}
-        {selectedCard && (
+        {selectedCard && !automaticSorting && (
           <div className="reorder-actions" aria-label="調整手牌順序">
             <button
               className="reorder-action"

@@ -564,6 +564,7 @@ input:focus { border-color: #facc15; box-shadow: 0 0 0 1px #facc15; }
 .hand-tools { display: flex; align-items: center; gap: 0.7rem; }
 .hand-sort-button, .reorder-action { padding: 0.35rem 0.55rem; border: 1px solid #40584d; background: #0c2118; color: #c8d5cf; font-size: 0.65rem; font-weight: 800; }
 .hand-sort-button:hover:not(:disabled), .reorder-action:hover:not(:disabled) { border-color: #facc15; color: #fef08a; }
+.hand-sort-button[aria-pressed="true"] { border-color: #facc15; color: #fef08a; }
 .hand-scroll { overflow-x: auto; overflow-y: hidden; padding: 1rem 1rem 1.4rem; scrollbar-color: #526a5e transparent; }
 .card-hand { min-width: max-content; display: flex; justify-content: center; padding-left: 1.3rem; }
 .card-hand .uno-card { margin-left: clamp(-1.3rem, -1.7vw, -0.75rem); transform-origin: center bottom; }
@@ -799,6 +800,7 @@ input:focus { border-color: #facc15; box-shadow: 0 0 0 1px #facc15; }
   .player-order-panel { display: none; }
   .player-actions-panel { grid-column: 2; grid-row: 2; height: 100%; max-height: none; display: flex; flex-direction: column; overflow-y: auto; }
   .action-history-panel ol { max-height: min(36vh, 22rem); }
+  .game-controls { margin-top: auto; }
   .table-shell { min-height: 0; margin-top: 0; }
   .felt-table { height: 100%; min-height: 0; }
   .desktop-player-seats { position: absolute; z-index: 2; inset: 0; display: block; margin: 0; padding: 0; list-style: none; pointer-events: none; }
